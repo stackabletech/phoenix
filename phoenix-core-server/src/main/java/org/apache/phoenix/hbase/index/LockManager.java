@@ -24,15 +24,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.hadoop.hbase.exceptions.TimeoutIOException;
-import org.apache.htrace.Trace;
-import org.apache.htrace.TraceScope;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.util.EnvironmentEdgeManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 
+ *
  * Manages reentrant row locks based on row keys. Phoenix needs to manage
  * its own locking due to secondary indexes needing a consistent snapshot from
  * the time the mvcc is acquired until the time it is advanced (PHOENIX-4053).
@@ -58,13 +56,9 @@ public class LockManager {
      */
     public RowLock lockRow(ImmutableBytesPtr rowKey, long waitDurationMs) throws IOException {
         RowLockImpl rowLock = new RowLockImpl(rowKey);
-        TraceScope traceScope = null;
 
-        // If we're tracing start a span to show how long this took.
-        if (Trace.isTracing()) {
-            traceScope = Trace.startSpan("LockManager.lockRow");
-            traceScope.getSpan().addTimelineAnnotation("Getting a row lock");
-        }
+        // TODO(stackable): Add tracing back in
+
         boolean success = false;
         try {
             while (true) {
@@ -97,13 +91,6 @@ public class LockManager {
             iie.initCause(ie);
             Thread.currentThread().interrupt();
             throw iie;
-        } finally {
-            if (traceScope != null) {
-                if (!success) {
-                    traceScope.getSpan().addTimelineAnnotation("Failed to get row lock");
-                }
-                traceScope.close();
-            }
         }
     }
 

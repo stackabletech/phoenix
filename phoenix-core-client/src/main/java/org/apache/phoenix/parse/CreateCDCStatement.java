@@ -68,4 +68,9 @@ public class CreateCDCStatement extends MutableStatement {
     public int getBindCount() {
         return bindCount;
     }
+
+    @Override
+    public String getKeyword() {
+        return "TODO";
+    }
 }

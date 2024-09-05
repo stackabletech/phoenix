@@ -51,4 +51,9 @@ public class DropCDCStatement extends MutableStatement {
     public PhoenixStatement.Operation getOperation() {
         return PhoenixStatement.Operation.DELETE;
     }
+
+    @Override
+    public String getKeyword() {
+        return "TODO";
+    }
 }

@@ -229,6 +229,7 @@ import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.QueryUtil;
 import org.apache.phoenix.util.SQLCloseable;
 import org.apache.phoenix.util.ParseNodeUtil.RewriteResult;
+import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.ValidateLastDDLTimestampUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -385,6 +386,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                             boolean pointLookup = false;
                             String tableName = null;
                             PhoenixResultSet rs = null;
+                            QueryPlan plan = null;
                             clearResultSet();
                             //TODO(stackable): check this merge!
                             try (Scope connScope = connection.makeCurrent()) {
@@ -400,7 +402,6 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                                         throw new UpgradeRequiredException();
                                     }
 
-                                    QueryPlan plan;
                                     Span compileSpan = TraceUtil.createSpan(connection, "Compiling and optimizing plan for " + stmt);
                                     try (Scope compileScope = compileSpan.makeCurrent()) {
                                         plan =
@@ -519,7 +520,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                                         // This will run an new span
                                         // TODO could maybe link the retry span to the failed one ?
                                         return executeQuery(stmt, false, queryLogger, noCommit,
-                                                                shouldValidateLastDdlTimestamp);
+                                                                  shouldValidateLastDdlTimestamp);
                                     }
                                 }
                                 throw e;

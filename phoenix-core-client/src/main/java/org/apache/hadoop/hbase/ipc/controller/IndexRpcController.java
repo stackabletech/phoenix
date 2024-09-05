@@ -21,7 +21,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.ipc.DelegatingHBaseRpcController;
 import org.apache.hadoop.hbase.ipc.HBaseRpcController;
-import org.apache.hadoop.hbase.ipc.PhoenixRpcSchedulerFactory;
 
 import com.google.protobuf.RpcController;
 import org.apache.phoenix.util.IndexUtil;
@@ -36,7 +35,7 @@ class IndexRpcController extends DelegatingHBaseRpcController {
 
     public IndexRpcController(HBaseRpcController delegate, Configuration conf) {
         super(delegate);
-        this.priority = PhoenixRpcSchedulerFactory.getIndexPriority(conf);
+        this.priority = IndexUtil.getIndexPriority(conf);
     }
 
     @Override
