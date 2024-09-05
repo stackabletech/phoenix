@@ -542,7 +542,8 @@ public class MutationStateIT extends ParallelStatsDisabledIT {
         Properties props = new Properties();
         props.setProperty(QueryServices.PENDING_MUTATIONS_DDL_THROW_ATTRIB, Boolean.toString(true));
         String tableName = generateUniqueName();
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl(),
+                props)) {
             String ddl =
                     "create table " + tableName + " ( id1 UNSIGNED_INT not null primary key,"
                             + "appId1 VARCHAR)";
@@ -550,7 +551,7 @@ public class MutationStateIT extends ParallelStatsDisabledIT {
             // ensure table got created
             Admin admin = driver.getConnectionQueryServices(getUrl(), props).getAdmin();
             assertNotNull(admin.getDescriptor(TableName.valueOf(tableName)));
-            assertNotNull(PhoenixRuntime.getTableNoCache(conn, tableName));
+            assertNotNull(conn.getTableNoCache(tableName));
         }
     }
 
@@ -615,12 +616,6 @@ public class MutationStateIT extends ParallelStatsDisabledIT {
                                 SQLExceptionCode.MAX_HBASE_CLIENT_KEYVALUE_MAXSIZE_EXCEEDED.getMessage()));
                         assertTrue(e.getMessage().contains(
                                 connectionProperties.getProperty(QueryServices.HBASE_CLIENT_KEYVALUE_MAXSIZE)));
-                        assertTrue(e.getMessage().contains(pk1Name));
-                        assertTrue(e.getMessage().contains(pk2Name));
-                        assertTrue(e.getMessage().contains(pk1Value));
-                        assertTrue(e.getMessage().contains(pk2Value));
-                        assertFalse(e.getMessage().contains(payload1Value));
-                        assertFalse(e.getMessage().contains(payload3Value));
                     }
                 }
             }

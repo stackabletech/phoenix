@@ -37,6 +37,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assert.assertThrows;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -48,6 +49,7 @@ import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
+import java.time.Duration;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.TableName;
@@ -74,7 +76,6 @@ import org.apache.phoenix.schema.export.DefaultSchemaWriter;
 import org.apache.phoenix.schema.export.SchemaRegistryRepositoryFactory;
 import org.apache.phoenix.util.EnvironmentEdgeManager;
 import org.apache.phoenix.util.IndexUtil;
-import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.TestUtil;
@@ -110,6 +111,8 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
     private String tableDDLOptions;
     private final boolean columnEncoded;
     private static final Logger LOGGER = LoggerFactory.getLogger(AlterTableIT.class);
+
+    private final long oneDayInMillis = Duration.ofDays(1).toMillis();
 
     public AlterTableIT(boolean columnEncoded) {
         this.columnEncoded = columnEncoded;
@@ -246,13 +249,13 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
         String schemaName = generateUniqueName();
         String tableName = generateUniqueName();
         String fullTableName = SchemaUtil.getTableName(schemaName, tableName);
-        try (Connection conn = DriverManager.getConnection(getUrl())) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl())) {
             String createDdl = "CREATE TABLE " + fullTableName +
                 " (id char(1) NOT NULL," + " col1 integer NOT NULL," + " col2 bigint NOT NULL," +
                 " CONSTRAINT NAME_PK PRIMARY KEY (id, col1, col2)) " +
                 "CHANGE_DETECTION_ENABLED=true, SCHEMA_VERSION='OLD', SALT_BUCKETS=4";
             conn.createStatement().execute(createDdl);
-            PTable table = PhoenixRuntime.getTableNoCache(conn, fullTableName);
+            PTable table = conn.getTableNoCache(fullTableName);
             assertEquals("OLD", table.getSchemaVersion());
             String expectedSchemaId = String.format("global*%s*%s*OLD", schemaName, tableName);
             assertEquals(expectedSchemaId, table.getExternalSchemaId());
@@ -260,14 +263,14 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
             String alterVersionDdl = "ALTER TABLE " + fullTableName + " SET SCHEMA_VERSION='NEW'";
             conn.createStatement().execute(alterVersionDdl);
 
-            PTable newTable = PhoenixRuntime.getTableNoCache(conn, fullTableName);
+            PTable newTable = conn.getTableNoCache(fullTableName);
             verifySchemaExport(newTable, getUtility().getConfiguration());
 
             String alterDdl = "ALTER TABLE " + fullTableName +
                 " ADD col3 VARCHAR NULL";
 
             conn.createStatement().execute(alterDdl);
-            newTable = PhoenixRuntime.getTableNoCache(conn, fullTableName);
+            newTable = conn.getTableNoCache(fullTableName);
             verifySchemaExport(newTable, getUtility().getConfiguration());
         }
     }
@@ -277,16 +280,16 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
         String schemaName = generateUniqueName();
         String tableName = generateUniqueName();
         String fullTableName = SchemaUtil.getTableName(schemaName, tableName);
-        try (Connection conn = DriverManager.getConnection(getUrl())) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl())) {
             String createDdl = "CREATE TABLE " + fullTableName + " (id char(1) NOT NULL," + " col1 integer NOT NULL," + " col2 bigint NOT NULL,"
                 + " CONSTRAINT NAME_PK PRIMARY KEY (id, col1, col2)) "
                 + " SCHEMA_VERSION='OLD'";
             conn.createStatement().execute(createDdl);
-            PTable table = PhoenixRuntime.getTableNoCache(conn, fullTableName);
+            PTable table = conn.getTableNoCache(fullTableName);
             Assert.assertNull(table.getExternalSchemaId());
             String alterDdl = "ALTER TABLE " + fullTableName + " SET CHANGE_DETECTION_ENABLED=true";
             conn.createStatement().execute(alterDdl);
-            PTable alteredTable = PhoenixRuntime.getTableNoCache(conn, fullTableName);
+            PTable alteredTable = conn.getTableNoCache(fullTableName);
             assertTrue(alteredTable.isChangeDetectionEnabled());
             verifySchemaExport(alteredTable, getUtility().getConfiguration());
         }
@@ -297,12 +300,12 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
         String schemaName = generateUniqueName();
         String tableName = generateUniqueName();
         String fullTableName = SchemaUtil.getTableName(schemaName, tableName);
-        try (Connection conn = DriverManager.getConnection(getUrl())) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl())) {
             String createDdl = "CREATE TABLE " + fullTableName + " (id char(1) NOT NULL," + " col1 integer NOT NULL," + " col2 bigint NOT NULL,"
                 + " CONSTRAINT NAME_PK PRIMARY KEY (id, col1, col2)) "
                 + "CHANGE_DETECTION_ENABLED=false, SCHEMA_VERSION='OLD'";
             conn.createStatement().execute(createDdl);
-            PTable table = PhoenixRuntime.getTableNoCache(conn, fullTableName);
+            PTable table = conn.getTableNoCache(fullTableName);
             assertFalse(table.isChangeDetectionEnabled());
             assertNull(table.getExternalSchemaId());
         }
@@ -411,17 +414,18 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
         final String schemaName = generateUniqueName();
         final String tableName = generateUniqueName();
         final String dataTableFullName = SchemaUtil.getTableName(schemaName, tableName);
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl(),
+                props)) {
             CreateTableIT.testCreateTableSchemaVersionAndTopicNameHelper(conn, schemaName, tableName, "V1.0", null);
             final String version = "V1.1";
             final String alterSql = "ALTER TABLE " + dataTableFullName + " SET SCHEMA_VERSION='" + version + "'";
             conn.createStatement().execute(alterSql);
-            PTable table = PhoenixRuntime.getTableNoCache(conn, dataTableFullName);
+            PTable table = conn.getTableNoCache(dataTableFullName);
             assertEquals(version, table.getSchemaVersion());
             final String topicName = "MyTopicName";
             final String alterSql2 = "ALTER TABLE " + dataTableFullName + " SET STREAMING_TOPIC_NAME='" + topicName + "'";
             conn.createStatement().execute(alterSql2);
-            table = PhoenixRuntime.getTableNoCache(conn, dataTableFullName);
+            table = conn.getTableNoCache(dataTableFullName);
             assertEquals(topicName, table.getStreamingTopicName());
         }
     }
@@ -1793,6 +1797,105 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
             LOGGER.info("Last DDL timestamp after changing property : " + newLastDDLTimestamp);
             assertTrue("LastDDLTimestamp should have been updated",
                     newLastDDLTimestamp > oldLastDDLTimestamp);
+        }
+    }
+
+    @Test
+    public void testChangeTableLevelMaxLookbackAge() throws Exception {
+        String schemaName = generateUniqueName();
+        String dataTableName = generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        Long maxLookbackAge = oneDayInMillis;
+        try (Connection conn = DriverManager.getConnection(getUrl())) {
+            String ddl = "CREATE TABLE  " + fullTableName +
+                    "  (a_string varchar not null PRIMARY KEY, col1 integer) MAX_LOOKBACK_AGE=" + maxLookbackAge;
+            conn.createStatement().execute(ddl);
+            assertMaxLookbackAge(fullTableName, maxLookbackAge);
+            maxLookbackAge = 3L * oneDayInMillis;
+            alterTableLevelMaxLookbackAge(fullTableName, maxLookbackAge.toString());
+            assertMaxLookbackAge(fullTableName, maxLookbackAge);
+            maxLookbackAge = 2L * oneDayInMillis;
+            alterTableLevelMaxLookbackAge(fullTableName, maxLookbackAge.toString());
+            assertMaxLookbackAge(fullTableName, maxLookbackAge);
+            maxLookbackAge = 0L;
+            alterTableLevelMaxLookbackAge(fullTableName, maxLookbackAge.toString());
+            assertMaxLookbackAge(fullTableName, maxLookbackAge);
+        }
+    }
+
+    @Test
+    public void testChangeTableLevelMaxLookbackAgeToInvalid() throws Exception {
+        String schemaName = generateUniqueName();
+        String dataTableName = generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        try(Connection conn = DriverManager.getConnection(getUrl())) {
+            String ddl = "CREATE TABLE  " + fullTableName +
+                    "  (a_string varchar not null PRIMARY KEY, col1 integer) MAX_LOOKBACK_AGE=" + oneDayInMillis;
+            conn.createStatement().execute(ddl);
+        }
+        assertThrows(IllegalArgumentException.class, () -> alterTableLevelMaxLookbackAge(fullTableName, "2309.3"));
+        assertThrows(IllegalArgumentException.class, () -> alterTableLevelMaxLookbackAge(fullTableName, "forty"));
+    }
+
+    @Test
+    public void testMaxLookbackAgeOfChildViewsAndIndexesWithAlterTable() throws Exception {
+        String schemaName = generateUniqueName();
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        Long maxLookbackAge = oneDayInMillis;
+        try(Connection conn = DriverManager.getConnection(getUrl());
+            Statement stmt = conn.createStatement()) {
+            String ddl = "CREATE TABLE  " + fullDataTableName +
+                    "  (a_string varchar not null PRIMARY KEY, col1 integer) MAX_LOOKBACK_AGE=" + maxLookbackAge;
+            stmt.execute(ddl);
+            assertMaxLookbackAge(fullDataTableName, maxLookbackAge);
+            String indexName = generateUniqueName();
+            String fullIndexName = SchemaUtil.getTableName(schemaName, indexName);
+            ddl = "CREATE INDEX " + indexName + " ON " + fullDataTableName + " (COL1)";
+            stmt.execute(ddl);
+            assertMaxLookbackAge(fullIndexName, maxLookbackAge);
+            String childViewName = generateUniqueName();
+            String fullChildViewName = SchemaUtil.getTableName(schemaName, childViewName);
+            ddl = "CREATE VIEW " + fullChildViewName + " AS SELECT * FROM " + fullDataTableName;
+            stmt.execute(ddl);
+            assertMaxLookbackAge(fullChildViewName, maxLookbackAge);
+            String childViewIndexName = generateUniqueName();
+            String fullChildViewIndexName = SchemaUtil.getTableName(schemaName, childViewIndexName);
+            ddl = "CREATE INDEX " + childViewIndexName + " ON " + fullChildViewName + " (COL1)";
+            stmt.execute(ddl);
+            assertMaxLookbackAge(fullChildViewIndexName, maxLookbackAge);
+            String grandChildViewName = generateUniqueName();
+            String fullGrandChildViewName = SchemaUtil.getTableName(schemaName, grandChildViewName);
+            ddl = "CREATE VIEW " + fullGrandChildViewName + " (col2 varchar) AS SELECT * FROM " + fullChildViewName;
+            stmt.execute(ddl);
+            assertMaxLookbackAge(fullGrandChildViewName, maxLookbackAge);
+            String grandChildViewIndexName = generateUniqueName();
+            String fullGrandChildViewIndexName = SchemaUtil.getTableName(schemaName, grandChildViewIndexName);
+            ddl = "CREATE INDEX " + grandChildViewIndexName + " ON " + fullGrandChildViewName + " (COL2)";
+            stmt.execute(ddl);
+            assertMaxLookbackAge(fullGrandChildViewIndexName, maxLookbackAge);
+            maxLookbackAge = 2 * oneDayInMillis;
+            alterTableLevelMaxLookbackAge(fullDataTableName, maxLookbackAge.toString());
+            assertMaxLookbackAge(fullDataTableName, maxLookbackAge);
+            assertMaxLookbackAge(fullIndexName, maxLookbackAge);
+            assertMaxLookbackAge(fullChildViewName, maxLookbackAge);
+            assertMaxLookbackAge(fullChildViewIndexName, maxLookbackAge);
+            assertMaxLookbackAge(fullGrandChildViewName, maxLookbackAge);
+            assertMaxLookbackAge(fullGrandChildViewIndexName, maxLookbackAge);
+        }
+    }
+
+    private void assertMaxLookbackAge(String fullTableName, Long expectedMaxLookbackAge) throws Exception {
+        try (Connection conn = DriverManager.getConnection(getUrl())) {
+            PhoenixConnection pconn = conn.unwrap(PhoenixConnection.class);
+            assertEquals(expectedMaxLookbackAge, pconn.getTableNoCache(fullTableName).getMaxLookbackAge());
+        }
+    }
+
+    private void alterTableLevelMaxLookbackAge(String fullTableName, String maxLookbackAge) throws Exception {
+        try(Connection conn = DriverManager.getConnection(getUrl())) {
+            String ddl  = "ALTER TABLE " + fullTableName + " SET MAX_LOOKBACK_AGE = " + maxLookbackAge;
+            conn.createStatement().execute(ddl);
         }
     }
 }

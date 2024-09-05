@@ -19,8 +19,6 @@ package org.apache.phoenix.end2end.index;
 
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Admin;
-import org.apache.hadoop.hbase.client.HBaseAdmin;
-import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.coprocessor.IndexToolVerificationResult;
@@ -47,7 +45,7 @@ import java.sql.SQLException;
 import java.util.Collections;
 import java.util.Map;
 
-import static org.apache.phoenix.coprocessor.MetaDataProtocol.DEFAULT_LOG_TTL;
+import static org.apache.phoenix.coprocessorclient.MetaDataProtocol.DEFAULT_LOG_TTL;
 import static org.apache.phoenix.mapreduce.index.IndexVerificationResultRepository.RESULT_TABLE_NAME_BYTES;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -109,7 +107,7 @@ public class IndexVerificationResultRepositoryIT extends ParallelStatsDisabledIT
         IndexVerificationResultRepository resultRepository =
                 new IndexVerificationResultRepository(conn, indexNameBytes);
         resultRepository.createResultTable(conn);
-        TestUtil.assertTableHasTtl(conn, TableName.valueOf(RESULT_TABLE_NAME_BYTES), DEFAULT_LOG_TTL);
+        TestUtil.assertTableHasTtl(conn, TableName.valueOf(RESULT_TABLE_NAME_BYTES), DEFAULT_LOG_TTL, false);
         byte[] regionOne = Bytes.toBytes("a.1.00000000000000000000");
         byte[] regionTwo = Bytes.toBytes("a.2.00000000000000000000");
         resultRepository.logToIndexToolResultTable(expectedResult, IndexTool.IndexVerifyType.BOTH,

@@ -20,7 +20,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.apache.phoenix</groupId>
   <artifactId>phoenix</artifactId>
-  <version>5.2.0-SNAPSHOT</version>
+  <version>5.3.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Apache Phoenix</name>
   <description>A SQL layer over HBase</description>
@@ -40,10 +40,12 @@
   </organization>
 
   <modules>
+    <module>phoenix-hbase-compat-2.6.0</module>
     <module>phoenix-hbase-compat-2.5.4</module>
     <module>phoenix-hbase-compat-2.5.0</module>
     <module>phoenix-hbase-compat-2.4.1</module>
-    <module>phoenix-hbase-compat-2.4.0</module>
+    <module>phoenix-core-client</module>
+    <module>phoenix-core-server</module>
     <module>phoenix-core</module>
     <module>phoenix-opentelemetry-trace-sampler</module>
     <module>phoenix-pherf</module>
@@ -60,7 +62,7 @@
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>23</version>
+    <version>30</version>
   </parent>
 
   <scm>
@@ -70,22 +72,21 @@
   </scm>
 
   <properties>
-
     <!-- Hadoop and Hbase-thirdparty version -->
     <!-- These are expected to be overridden to conform to cluster versions
     along with hbase.version (defined in profiles) -->
-    <hadoop.version>3.1.4</hadoop.version>
+    <hadoop.version>3.2.4</hadoop.version>
 
-    <phoenix.thirdparty.version>2.0.0</phoenix.thirdparty.version>
+    <phoenix.thirdparty.version>2.1.0</phoenix.thirdparty.version>
     <hbase.suffix>hbase-${hbase.profile}</hbase.suffix>
 
     <!-- This is used by the release script only -->
-    <hbase.profile.list>2.4.0 2.4 2.5.0 2.5</hbase.profile.list>
+    <hbase.profile.list>2.4 2.5.0 2.5 2.6</hbase.profile.list>
     <!-- The default hbase versions to build with (override with hbase.version) -->
-    <hbase-2.4.0.runtime.version>2.4.0</hbase-2.4.0.runtime.version>
-    <hbase-2.4.runtime.version>2.4.16</hbase-2.4.runtime.version>
+    <hbase-2.4.runtime.version>2.4.18</hbase-2.4.runtime.version>
     <hbase-2.5.0.runtime.version>2.5.3-hadoop3</hbase-2.5.0.runtime.version>
-    <hbase-2.5.runtime.version>2.5.5-hadoop3</hbase-2.5.runtime.version>
+    <hbase-2.5.runtime.version>2.5.10-hadoop3</hbase-2.5.runtime.version>
+    <hbase-2.6.runtime.version>2.6.0-hadoop3</hbase-2.6.runtime.version>
 
     <compileSource>1.8</compileSource>
     <maven.compiler.source>${compileSource}</maven.compiler.source>
@@ -96,9 +97,12 @@
     <antlr-output.dir>target/generated-sources/antlr3</antlr-output.dir>
     <test.output.tofile>true</test.output.tofile>
     <top.dir>${project.basedir}/..</top.dir>
+    <test.tmp.dir>${project.build.directory}</test.tmp.dir>
+    <shadeSources>true</shadeSources>
 
     <!-- Dependency versions -->
     <jackson-bom.version>2.14.1</jackson-bom.version>
+    <netty-bom.version>4.1.108.Final</netty-bom.version>
     <antlr.version>3.5.2</antlr.version>
     <!-- Only used for tests with HBase 2.1-2.4 -->
     <reload4j.version>1.2.19</reload4j.version>
@@ -110,24 +114,22 @@
     <protobuf-java.version>2.5.0</protobuf-java.version>
     <protoc.version>2.5.0</protoc.version>
     <commons-io.version>2.11.0</commons-io.version>
-    <commons-lang.version>3.8</commons-lang.version>
+    <commons-lang3.version>3.8</commons-lang3.version>
     <commons-csv.version>1.0</commons-csv.version>
-    <commons-compress.version>1.21</commons-compress.version>
+    <commons-compress.version>1.26.0</commons-compress.version>
     <sqlline.version>1.9.0</sqlline.version>
-    <commons-configuration2.version>2.1.1</commons-configuration2.version>
-    <findbugs-annotations.version>1.3.9-1</findbugs-annotations.version>
     <jcip-annotations.version>1.0-1</jcip-annotations.version>
     <jsr305.version>2.0.1</jsr305.version>
-    <snappy.version>0.3</snappy.version>
+    <snappy.version>0.5</snappy.version>
     <commons-codec.version>1.16.0</commons-codec.version>
     <collections.version>3.2.2</collections.version>
     <jodatime.version>2.10.5</jodatime.version>
     <joni.version>2.1.31</joni.version>
-    <omid.version>1.1.0</omid.version>
+    <omid.version>1.1.2</omid.version>
     <stream.version>2.9.5</stream.version>
     <icu4j.version>72.1</icu4j.version>
     <guice.version>5.1.0</guice.version>
-    <zookeeper.version>3.5.7</zookeeper.version>
+    <zookeeper.version>3.8.4</zookeeper.version>
     <curator.version>4.2.0</curator.version>
     <jcodings.version>1.0.55</jcodings.version>
     <jetty.version>9.4.53.v20231009</jetty.version>
@@ -135,29 +137,44 @@
     <opentelemetry.version>1.31.0</opentelemetry.version>
     <opentelemetry-javaagent.version>1.31.0</opentelemetry-javaagent.version>
     <opentelemetry-semconv.version>1.21.0-alpha</opentelemetry-semconv.version>
+    <json-path.version>2.9.0</json-path.version>
+    <bson.version>4.4.0</bson.version>
 
     <!-- Test Dependencies -->
-    <mockito.version>1.10.19</mockito.version>
+    <mockito.version>4.11.0</mockito.version>
     <junit.version>4.13.1</junit.version>
-    <hamcrest.version>1.3</hamcrest.version>
     <hdrhistogram.version>2.1.12</hdrhistogram.version>
 
+    <!-- These are only used for exclusion when shading, and the exact version is completely
+    irrelevant, but we need to keep them up to date to appease static checkers. While Phoenix does
+    use theses packages, it does not explicitly depend on them, but instead takes the transitve
+    dependencies from the Hadoop/HBase version used for building. -->
+    <commons-configuration2.excludeonly.version>2.10.1</commons-configuration2.excludeonly.version>
+    <hbase-thirdparty.excludeonly.version>4.1.7</hbase-thirdparty.excludeonly.version>
+
     <!-- Plugin versions -->
-    <maven-eclipse-plugin.version>2.9</maven-eclipse-plugin.version>
-    <maven-build-helper-plugin.version>1.9.1</maven-build-helper-plugin.version>
-    <maven-enforcer-plugin.version>3.0.0-M3</maven-enforcer-plugin.version>
-    <restrict-imports.enforcer.version>1.1.0</restrict-imports.enforcer.version>
-    <maven-shade-plugin.version>3.2.4</maven-shade-plugin.version>
+    <maven-eclipse-plugin.version>2.10</maven-eclipse-plugin.version>
+    <maven-build-helper-plugin.version>3.5.0</maven-build-helper-plugin.version>
+    <restrict-imports.enforcer.version>2.4.0</restrict-imports.enforcer.version>
     <maven-antlr-eclipse-plugin.version>${antlr.version}</maven-antlr-eclipse-plugin.version>
-    <maven-project-info-reports-plugin.version>3.1.1</maven-project-info-reports-plugin.version>
-    <!-- Override property in ASF parent -->
-    <surefire.version>3.0.0</surefire.version>
-    <spotbugs-maven-plugin.version>4.4.1</spotbugs-maven-plugin.version>
-    <spotbugs.version>4.4.1</spotbugs.version>
-    <jacoco-maven-plugin.version>0.8.8</jacoco-maven-plugin.version>
-    <sonar-maven-plugin.version>3.9.1.2184</sonar-maven-plugin.version>
+    <spotbugs-maven-plugin.version>4.8.1.0</spotbugs-maven-plugin.version>
+    <spotbugs.version>4.8.1</spotbugs.version>
+    <jacoco-maven-plugin.version>0.8.11</jacoco-maven-plugin.version>
+    <sonar-maven-plugin.version>3.10.0.2594</sonar-maven-plugin.version>
+    <findbugs-annotations.version>1.3.9-1</findbugs-annotations.version>
+    <maven-owasp-plugin.version>8.4.0</maven-owasp-plugin.version>
+    <os.maven.version>1.7.1</os.maven.version>
+    <jasmine-maven-plugin.version>2.2</jasmine-maven-plugin.version>
+    <lifecycle-mapping.version>1.0.0</lifecycle-mapping.version>
+    <maven-bundle-plugin.version>5.1.9</maven-bundle-plugin.version>
+    <exec-maven-plugin.version>3.1.1</exec-maven-plugin.version>
+    <maven-checkstyle-plugin.version>3.3.0</maven-checkstyle-plugin.version>
+    <mvel2.version>2.5.2.Final</mvel2.version>
 
     <!-- Plugin options -->
+    <skipParallelStatsEnabledTests>false</skipParallelStatsEnabledTests>
+    <skipParallelStatsDisabledTests>false</skipParallelStatsDisabledTests>
+    <skipNeedsOwnMiniClusterTests>false</skipNeedsOwnMiniClusterTests>
     <numForkedUT>8</numForkedUT>
     <numForkedIT>7</numForkedIT>
     <it.failIfNoSpecifiedTests>false</it.failIfNoSpecifiedTests>
@@ -208,14 +225,14 @@
     <jacoco.instruction.coverage.percentage>0.700</jacoco.instruction.coverage.percentage>
     <jacoco.branch.coverage.percentage>0.600</jacoco.branch.coverage.percentage>
 
-    <maven-owasp-plugin.version>6.5.3</maven-owasp-plugin.version>
     <protobuf.plugin.version>0.6.1</protobuf.plugin.version>
-    <os.maven.version>1.5.0.Final</os.maven.version>
     <!-- PHOENIX-6806 - Default protoc architecture to the detected one,
       but allow for profile overrides -->
     <protoc.arch>${os.detected.classifier}</protoc.arch>
     <!-- Keeping the version in sync with hbase javax.el version -->
     <glassfish.el.version>3.0.1-b08</glassfish.el.version>
+    <shaded.package>org.apache.phoenix.shaded</shaded.package>
+    <hbase.shaded.package>org.apache.hadoop.hbase.shaded</hbase.shaded.package>
   </properties>
 
   <build>
@@ -232,7 +249,6 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-project-info-reports-plugin</artifactId>
-          <version>${maven-project-info-reports-plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -246,7 +262,7 @@
         <plugin>
           <groupId>com.github.searls</groupId>
           <artifactId>jasmine-maven-plugin</artifactId>
-          <version>2.2</version>
+          <version>${jasmine-maven-plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>com.github.spotbugs</groupId>
@@ -265,12 +281,12 @@
             <excludeFilterFile>${top.dir}/src/main/config/spotbugs/spotbugs-exclude.xml</excludeFilterFile>
           </configuration>
         </plugin>
-        <!--This plugin's configuration is used to store Eclipse m2e settings 
+        <!--This plugin's configuration is used to store Eclipse m2e settings
           only. It has no influence on the Maven build itself. -->
         <plugin>
           <groupId>org.eclipse.m2e</groupId>
           <artifactId>lifecycle-mapping</artifactId>
-          <version>1.0.0</version>
+          <version>${lifecycle-mapping.version}</version>
           <configuration>
             <lifecycleMappingMetadata>
               <pluginExecutions>
@@ -363,11 +379,15 @@
             <!-- https://www.orpiske.net/2021/04/test-woes-with-maven-failsafe-3-0-0-m5 -->
             <useModulePath>false</useModulePath>
             <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
+            <systemPropertyVariables>
+              <java.io.tmpdir>${test.tmp.dir}</java.io.tmpdir>
+            </systemPropertyVariables>
           </configuration>
           <executions>
             <execution>
               <id>ParallelStatsEnabledTest</id>
               <configuration>
+                <skip>${skipParallelStatsEnabledTests}</skip>
                 <reuseForks>true</reuseForks>
                 <groups>org.apache.phoenix.end2end.ParallelStatsEnabledTest</groups>
               </configuration>
@@ -380,6 +400,7 @@
               <id>ParallelStatsDisabledTest</id>
               <configuration>
                 <reuseForks>true</reuseForks>
+                <skip>${skipParallelStatsDisabledTests}</skip>
                 <groups>org.apache.phoenix.end2end.ParallelStatsDisabledTest</groups>
               </configuration>
               <goals>
@@ -391,6 +412,7 @@
               <id>NeedTheirOwnClusterTests</id>
               <configuration>
                  <reuseForks>false</reuseForks>
+                 <skip>${skipNeedsOwnMiniClusterTests}</skip>
                  <groups>org.apache.phoenix.end2end.NeedsOwnMiniClusterTest</groups>
               </configuration>
               <goals>
@@ -402,6 +424,7 @@
         </plugin>
         <plugin>
           <artifactId>maven-dependency-plugin</artifactId>
+          <version>3.1.1</version>
           <configuration>
               <ignoredUnusedDeclaredDependencies>
                 <ignoredUnusedDeclaredDependency>
@@ -422,12 +445,6 @@
                 <ignoredUnusedDeclaredDependency>
                   org.apache.logging.log4j:log4j-1.2-api
                 </ignoredUnusedDeclaredDependency>
-                <ignoredUnusedDeclaredDependency>
-                  org.apache.logging.log4j:log4j-api
-                </ignoredUnusedDeclaredDependency>
-                <ignoredUnusedDeclaredDependency>
-                  org.apache.logging.log4j:log4j-core
-                </ignoredUnusedDeclaredDependency>
               </ignoredUnusedDeclaredDependencies>
               <ignoredUsedUndeclaredDependencies>
                 <ignoredUsedUndeclaredDependency>
@@ -437,6 +454,13 @@
                 <ignoredUsedUndeclaredDependency>
                   <!-- These change too frequently, so we just rely on the hbase transitive deps -->
                   org.apache.hbase.thirdparty:*
+                </ignoredUsedUndeclaredDependency>
+                <ignoredUsedUndeclaredDependency>
+                  <!-- We only need this because the Hadoop Metrics API leak.
+                  By not declaring the dependency, we can pick up the CVE fixed version from Hadoop
+                  without having to also declare a dependency on commons-text dependency
+                  (which we do not use directly at all)-->
+                  org.apache.commons:commons-configuration2
                 </ignoredUsedUndeclaredDependency>
               </ignoredUsedUndeclaredDependencies>
             </configuration>
@@ -466,18 +490,17 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-shade-plugin</artifactId>
-          <version>${maven-shade-plugin.version}</version>
         </plugin>
         <plugin>
           <!-- Allows us to get the apache-ds bundle artifacts -->
           <groupId>org.apache.felix</groupId>
           <artifactId>maven-bundle-plugin</artifactId>
-          <version>2.5.3</version>
+          <version>${maven-bundle-plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>exec-maven-plugin</artifactId>
-          <version>1.6.0</version>
+          <version>${exec-maven-plugin.version}</version>
         </plugin>
         <plugin>
           <groupId>org.xolstice.maven.plugins</groupId>
@@ -487,7 +510,6 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-enforcer-plugin</artifactId>
-          <version>${maven-enforcer-plugin.version}</version>
           <dependencies>
             <dependency>
               <groupId>de.skuzzle.enforcer</groupId>
@@ -504,42 +526,42 @@
               </goals>
               <configuration>
                 <rules>
-                  <restrictImports implementation="de.skuzzle.enforcer.restrictimports.rule.RestrictImports">
+                  <RestrictImports>
                     <includeTestCode>true</includeTestCode>
                     <reason>Use SLF4j for logging</reason>
                     <bannedImports>
                       <bannedImport>org.apache.commons.logging.Log</bannedImport>
                       <bannedImport>org.apache.commons.logging.LogFactory</bannedImport>
                     </bannedImports>
-                  </restrictImports>
-                  <restrictImports implementation="de.skuzzle.enforcer.restrictimports.rule.RestrictImports">
+                  </RestrictImports>
+                  <RestrictImports>
                     <includeTestCode>true</includeTestCode>
                     <reason>Use shaded version in phoenix-thirdparty</reason>
                     <bannedImports>
                       <bannedImport>com.google.common.**</bannedImport>
                     </bannedImports>
-                  </restrictImports>
-                  <restrictImports implementation="de.skuzzle.enforcer.restrictimports.rule.RestrictImports">
+                  </RestrictImports>
+                  <RestrictImports>
                     <includeTestCode>true</includeTestCode>
                     <reason>Use shaded version in phoenix-thirdparty</reason>
                     <bannedImports>
                       <bannedImport>org.apache.commons.cli.**</bannedImport>
                     </bannedImports>
-                  </restrictImports>
-                  <restrictImports implementation="de.skuzzle.enforcer.restrictimports.rule.RestrictImports">
+                  </RestrictImports>
+                  <RestrictImports>
                     <includeTestCode>true</includeTestCode>
                     <reason>Use commons lang 3</reason>
                     <bannedImports>
                       <bannedImport>org.apache.commons.lang.**</bannedImport>
                     </bannedImports>
-                  </restrictImports>
-                  <restrictImports implementation="de.skuzzle.enforcer.restrictimports.rule.RestrictImports">
+                  </RestrictImports>
+                  <RestrictImports>
                     <includeTestCode>true</includeTestCode>
                     <reason>Use edu.umd.cs.findbugs.annotations</reason>
                     <bannedImports>
                       <bannedImport>com.sun.istack.**</bannedImport>
                     </bannedImports>
-                  </restrictImports>
+                  </RestrictImports>
                 </rules>
               </configuration>
             </execution>
@@ -552,7 +574,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
-        <version>3.1.0</version>
+        <version>${maven-checkstyle-plugin.version}</version>
         <configuration>
           <configLocation>${top.dir}/src/main/config/checkstyle/checker.xml</configLocation>
           <suppressionsLocation>${top.dir}/src/main/config/checkstyle/suppressions.xml</suppressionsLocation>
@@ -616,6 +638,9 @@
           <shutdown>exit</shutdown>
           <trimStackTrace>false</trimStackTrace>
           <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
+          <systemPropertyVariables>
+            <java.io.tmpdir>${test.tmp.dir}</java.io.tmpdir>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
       <!-- All projects create a test jar -->
@@ -679,12 +704,17 @@
       <!-- Intra-project dependencies -->
       <dependency>
         <groupId>org.apache.phoenix</groupId>
-        <artifactId>phoenix-core</artifactId>
+        <artifactId>phoenix-core-client</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.phoenix</groupId>
-        <artifactId>phoenix-client-embedded-hbase-2.4.0</artifactId>
+        <artifactId>phoenix-core-server</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-core</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
@@ -704,7 +734,27 @@
       </dependency>
       <dependency>
         <groupId>org.apache.phoenix</groupId>
-        <artifactId>phoenix-server-hbase-2.4.0</artifactId>
+        <artifactId>phoenix-client-embedded-hbase-2.6</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-client-lite-hbase-2.4</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-client-lite-hbase-2.5.0</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-client-lite-hbase-2.5</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-client-lite-hbase-2.6</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
@@ -724,6 +774,31 @@
       </dependency>
       <dependency>
         <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-server-hbase-2.6</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-mapreduce-byo-shaded-hbase-hbase-2.4</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-mapreduce-byo-shaded-hbase-hbase-2.5.0</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-mapreduce-byo-shaded-hbase-hbase-2.5</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-mapreduce-byo-shaded-hbase-hbase-2.6</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
         <artifactId>phoenix-pherf</artifactId>
         <version>${project.version}</version>
       </dependency>
@@ -731,11 +806,6 @@
         <groupId>org.apache.phoenix.thirdparty</groupId>
         <artifactId>phoenix-shaded-guava</artifactId>
         <version>${phoenix.thirdparty.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.phoenix</groupId>
-        <artifactId>phoenix-hbase-compat-2.4.0</artifactId>
-        <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.phoenix</groupId>
@@ -750,6 +820,11 @@
       <dependency>
         <groupId>org.apache.phoenix</groupId>
         <artifactId>phoenix-hbase-compat-2.5.4</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.phoenix</groupId>
+        <artifactId>phoenix-hbase-compat-2.6.0</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
@@ -785,6 +860,19 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <!-- See HADOOP-18991 -->
+            <groupId>commons-beanutils</groupId>
+            <artifactId>commons-beanutils</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -805,6 +893,19 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <!-- See HADOOP-18991 -->
+            <groupId>commons-beanutils</groupId>
+            <artifactId>commons-beanutils</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -819,6 +920,37 @@
           <exclusion>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-mapreduce-client-common</artifactId>
+        <version>${hadoop.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -857,6 +989,14 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -882,6 +1022,14 @@
           <exclusion>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
           </exclusion>
         </exclusions>
         <version>${hadoop.version}</version>
@@ -911,6 +1059,24 @@
         <artifactId>hadoop-minicluster</artifactId>
         <version>${hadoop.version}</version>
         <scope>test</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
+        </exclusions>
         <optional>true</optional>
       </dependency>
       <dependency>
@@ -926,6 +1092,14 @@
           <exclusion>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -949,6 +1123,14 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
 
@@ -958,12 +1140,48 @@
         <artifactId>hadoop-mapreduce-client-app</artifactId>
         <version>${hadoop.version}</version>
         <scope>test</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-mapreduce-client-jobclient</artifactId>
         <version>${hadoop.version}</version>
         <scope>test</scope>
+        <exclusions>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
 
       <!-- HBase dependencies -->
@@ -994,6 +1212,14 @@
           <exclusion>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -1034,6 +1260,14 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -1049,7 +1283,20 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>ch.qos.reload4j</groupId>
+            <artifactId>reload4j</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-reload4j</artifactId>
+          </exclusion>
         </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hbase</groupId>
+        <artifactId>hbase-replication</artifactId>
+        <version>${hbase.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.hbase</groupId>
@@ -1233,10 +1480,6 @@
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
           </exclusion>
-          <exclusion>
-            <groupId>commons-beanutils</groupId>
-            <artifactId>commons-beanutils</artifactId>
-          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
@@ -1286,10 +1529,6 @@
         <version>${omid.version}</version>
         <exclusions>
           <exclusion>
-            <groupId>commons-beanutils</groupId>
-            <artifactId>commons-beanutils</artifactId>
-          </exclusion>
-          <exclusion>
             <groupId>org.testng</groupId>
             <artifactId>testng</artifactId>
           </exclusion>
@@ -1334,6 +1573,18 @@
         </exclusions>
       </dependency>
 
+      <dependency>
+        <groupId>org.mvel</groupId>
+        <artifactId>mvel2</artifactId>
+        <version>${mvel2.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>com.thoughtworks.xstream</groupId>
+            <artifactId>xstream</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+
       <!-- Other dependencies -->
       <dependency>
         <groupId>org.apache.zookeeper</groupId>
@@ -1347,6 +1598,14 @@
           <exclusion>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-core</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
           </exclusion>
         </exclusions>
       </dependency>
@@ -1392,6 +1651,16 @@
         <scope>import</scope>
         <type>pom</type>
       </dependency>
+      <!-- We don't depend on netty directly, but we need this to avoid pulling in different
+      4.1.x versions of netty modules from the transitive dependencies
+      (ZK via Omid and ZK via Curator) -->
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty-bom.version}</version>
+        <scope>import</scope>
+        <type>pom</type>
+      </dependency>
       <dependency>
         <groupId>com.google.protobuf</groupId>
         <artifactId>protobuf-java</artifactId>
@@ -1412,6 +1681,12 @@
         <artifactId>commons-collections</artifactId>
         <version>${collections.version}</version>
       </dependency>
+      <!-- Update transitive dependency to a one without CVEs -->
+      <dependency>
+          <groupId>com.fasterxml.woodstox</groupId>
+          <artifactId>woodstox-core</artifactId>
+          <version>5.4.0</version>
+      </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-csv</artifactId>
@@ -1425,12 +1700,7 @@
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-lang3</artifactId>
-        <version>${commons-lang.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.commons</groupId>
-        <artifactId>commons-configuration2</artifactId>
-        <version>${commons-configuration2.version}</version>
+        <version>${commons-lang3.version}</version>
       </dependency>
       <dependency>
         <groupId>commons-io</groupId>
@@ -1499,6 +1769,18 @@
         <artifactId>opentelemetry-javaagent</artifactId>
         <version>${opentelemetry-javaagent.version}</version>
       </dependency>
+      <dependency>
+        <groupId>com.jayway.jsonpath</groupId>
+        <artifactId>json-path</artifactId>
+        <version>${json-path.version}</version>
+      </dependency>
+      <!-- https://mvnrepository.com/artifact/org.mongodb/bson -->
+      <dependency>
+        <groupId>org.mongodb</groupId>
+        <artifactId>bson</artifactId>
+        <version>${bson.version}</version>
+      </dependency>
+
       <!-- Other test dependencies -->
       <dependency>
         <groupId>junit</groupId>
@@ -1508,15 +1790,10 @@
       </dependency>
       <dependency>
         <groupId>org.mockito</groupId>
-        <artifactId>mockito-core</artifactId>
+        <artifactId>mockito-bom</artifactId>
         <version>${mockito.version}</version>
-        <scope>test</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.hamcrest</groupId>
-        <artifactId>hamcrest-core</artifactId>
-        <version>${hamcrest.version}</version>
-        <scope>test</scope>
+        <type>pom</type>
+        <scope>import</scope>
       </dependency>
 
        <!-- Runtime dependencies -->
@@ -1575,7 +1852,9 @@
       <modules>
         <module>phoenix-client-parent</module>
         <module>phoenix-client-parent/phoenix-client-embedded</module>
+        <module>phoenix-client-parent/phoenix-client-lite</module>
         <module>phoenix-server</module>
+        <module>phoenix-mapreduce-byo-shaded-hbase</module>
         <module>phoenix-assembly</module>
       </modules>
     </profile>
@@ -1603,33 +1882,19 @@
     <!-- The dependencies should be defined only in phoenix-core
     ,but maven doesn't seem to support that -->
     <profile>
-      <!-- must be identical to phoenix-hbase-compat-2.4.1 profile -->
-      <!-- PHOENIX-5993 This won't work with the public HBase artifacts -->
-      <id>phoenix-hbase-compat-2.4.1-default</id>
+      <!-- must be identical to phoenix-hbase-compat-2.5.4 profile -->
+      <!-- This WILL work with the public HBase artifacts -->
+      <id>phoenix-hbase-compat-2.5.4-default</id>
       <activation>
         <property>
           <name>!hbase.profile</name>
         </property>
       </activation>
       <properties>
-        <hbase.profile>2.4</hbase.profile>
-        <hbase.compat.version>2.4.1</hbase.compat.version>
-        <hbase.version>${hbase-2.4.runtime.version}</hbase.version>
-      </properties>
-    </profile>
-    <profile>
-      <!-- PHOENIX-5993 This won't work with the public HBase artifacts -->
-      <id>phoenix-hbase-compat-2.4.0</id>
-      <activation>
-        <property>
-          <name>hbase.profile</name>
-          <value>2.4.0</value>
-        </property>
-      </activation>
-      <properties>
-        <hbase.profile>2.4.0</hbase.profile>
-        <hbase.compat.version>2.4.0</hbase.compat.version>
-        <hbase.version>${hbase-2.4.0.runtime.version}</hbase.version>
+        <hbase.profile>2.5</hbase.profile>
+        <hbase.compat.version>2.5.4</hbase.compat.version>
+        <hadoop.version>3.2.4</hadoop.version>
+        <hbase.version>${hbase-2.5.runtime.version}</hbase.version>
       </properties>
     </profile>
     <profile>
@@ -1644,6 +1909,7 @@
       <properties>
         <hbase.profile>2.4</hbase.profile>
         <hbase.compat.version>2.4.1</hbase.compat.version>
+        <hadoop.version>3.1.4</hadoop.version>
         <hbase.version>${hbase-2.4.runtime.version}</hbase.version>
       </properties>
     </profile>
@@ -1659,7 +1925,7 @@
       <properties>
         <hbase.profile>2.5</hbase.profile>
         <hbase.compat.version>2.5.4</hbase.compat.version>
-        <hadoop.version>3.2.3</hadoop.version>
+        <hadoop.version>3.2.4</hadoop.version>
         <hbase.version>${hbase-2.5.runtime.version}</hbase.version>
       </properties>
     </profile>
@@ -1675,8 +1941,24 @@
       <properties>
         <hbase.profile>2.5.0</hbase.profile>
         <hbase.compat.version>2.5.0</hbase.compat.version>
-        <hadoop.version>3.2.3</hadoop.version>
+        <hadoop.version>3.2.4</hadoop.version>
         <hbase.version>${hbase-2.5.0.runtime.version}</hbase.version>
+      </properties>
+    </profile>
+    <profile>
+      <!-- This WILL work with the public -hadoop3 artifacts -->
+      <id>phoenix-hbase-compat-2.6.0</id>
+      <activation>
+        <property>
+          <name>hbase.profile</name>
+          <value>2.6</value>
+        </property>
+      </activation>
+      <properties>
+        <hbase.profile>2.6</hbase.profile>
+        <hbase.compat.version>2.6.0</hbase.compat.version>
+        <hadoop.version>3.3.5</hadoop.version>
+        <hbase.version>${hbase-2.6.runtime.version}</hbase.version>
       </properties>
     </profile>
     <profile>

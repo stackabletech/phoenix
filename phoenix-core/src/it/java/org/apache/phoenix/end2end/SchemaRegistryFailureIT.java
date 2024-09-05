@@ -20,6 +20,7 @@ package org.apache.phoenix.end2end;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.phoenix.exception.SQLExceptionCode;
+import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.TableNotFoundException;
 import org.apache.phoenix.schema.export.SchemaRegistryRepository;
@@ -39,7 +40,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Map;
 
-import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY;
+import static org.apache.phoenix.coprocessorclient.BaseScannerRegionObserverConstants.PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY;
 
 @Category(NeedsOwnMiniClusterTest.class)
 public class SchemaRegistryFailureIT extends ParallelStatsDisabledIT{
@@ -58,7 +59,7 @@ public class SchemaRegistryFailureIT extends ParallelStatsDisabledIT{
         String schemaName = "S_" + generateUniqueName();
         String tableName = "T_" + generateUniqueName();
         String fullTableName = SchemaUtil.getTableName(schemaName, tableName);
-        try (Connection conn = DriverManager.getConnection(getUrl())) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl())) {
             String ddl = "CREATE TABLE " + fullTableName + " (id char(1) NOT NULL," +
                 " col1 integer NOT NULL," + " col2 bigint NOT NULL,"
                 + " CONSTRAINT NAME_PK PRIMARY KEY (id, col1, col2)) "
@@ -72,7 +73,7 @@ public class SchemaRegistryFailureIT extends ParallelStatsDisabledIT{
             }
 
             try {
-                PTable table = PhoenixRuntime.getTable(conn, fullTableName);
+                PTable table = conn.getTable(fullTableName);
                 Assert.fail("Shouldn't have found the table because it shouldn't have been created");
             } catch (TableNotFoundException tnfe) {
                 //eat the exception, which is what we expect
@@ -85,7 +86,7 @@ public class SchemaRegistryFailureIT extends ParallelStatsDisabledIT{
         String schemaName = "S_" + generateUniqueName();
         String tableName = "T_" + generateUniqueName();
         String fullTableName = SchemaUtil.getTableName(schemaName, tableName);
-        try (Connection conn = DriverManager.getConnection(getUrl())) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl())) {
             String ddl = "CREATE TABLE " + fullTableName + " (id char(1) NOT NULL,"
                 + " col1 integer NOT NULL," + " col2 bigint NOT NULL,"
                 + " CONSTRAINT NAME_PK PRIMARY KEY (id, col1, col2)) " + "MULTI_TENANT=true";
@@ -100,7 +101,7 @@ public class SchemaRegistryFailureIT extends ParallelStatsDisabledIT{
                 Assert.assertEquals(SQLExceptionCode.ERROR_WRITING_TO_SCHEMA_REGISTRY.getErrorCode(),
                     se.getErrorCode());
             }
-            PTable table = PhoenixRuntime.getTable(conn, fullTableName);
+            PTable table = conn.getTable(fullTableName);
             Assert.assertFalse(table.isChangeDetectionEnabled());
         }
     }

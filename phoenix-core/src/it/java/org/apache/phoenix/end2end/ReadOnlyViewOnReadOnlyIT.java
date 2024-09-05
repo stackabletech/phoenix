@@ -46,12 +46,13 @@ public class ReadOnlyViewOnReadOnlyIT extends BaseTenantSpecificViewIndexIT {
             //base table
             String tableName = generateUniqueName();
             conn.createStatement().execute("CREATE TABLE IF NOT EXISTS  " + tableName + "  ("
+                    + "TID CHAR(15) NOT NULL,"
                     + " ID INTEGER NOT NULL,"
                     + " COL1 INTEGER NOT NULL,"
                     + " COL2 bigint NOT NULL,"
                     + " CREATED_DATE DATE,"
                     + " CREATION_TIME BIGINT,"
-                    + " CONSTRAINT NAME_PK PRIMARY KEY (ID, COL1, COL2))"
+                    + " CONSTRAINT NAME_PK PRIMARY KEY (TID, ID, COL1, COL2))"
                     + " TTL = " + DEFAULT_TTL_FOR_TEST
                     + "," + UPDATE_CACHE_FREQUENCY + " = 100000000"
                     + ", MULTI_TENANT = true");
@@ -65,12 +66,14 @@ public class ReadOnlyViewOnReadOnlyIT extends BaseTenantSpecificViewIndexIT {
 
             //tenant child view
             String TENANT_ID = generateUniqueName();
-            try (Connection tenantConn = getTenantConnection(TENANT_ID)) {
+            try (PhoenixConnection tenantConn = (PhoenixConnection) getTenantConnection(TENANT_ID))
+            {
                 final Statement tenantStmt = tenantConn.createStatement();
                 tenantStmt.execute("CREATE VIEW " + "TENANT_VIEW_" + viewName + " AS SELECT * FROM " + viewName);
 
-                assertEquals(PTable.ViewType.READ_ONLY, PhoenixRuntime.getTable(conn, viewName).getViewType());
-                assertEquals(PTable.ViewType.READ_ONLY, PhoenixRuntime.getTable(tenantConn, "TENANT_VIEW_" + viewName).getViewType());
+                assertEquals(PTable.ViewType.READ_ONLY, conn.getTable(viewName).getViewType());
+                assertEquals(PTable.ViewType.READ_ONLY, tenantConn.getTable(
+                        "TENANT_VIEW_" + viewName).getViewType());
             }
         }
     }
@@ -101,8 +104,8 @@ public class ReadOnlyViewOnReadOnlyIT extends BaseTenantSpecificViewIndexIT {
             String childView = "VIEW_" + viewName + "_" + generateUniqueName();
             conn.createStatement().execute("CREATE VIEW " + childView + " AS SELECT * FROM " + viewName);
 
-            assertEquals(PTable.ViewType.READ_ONLY, PhoenixRuntime.getTable(conn,viewName).getViewType());
-            assertEquals(PTable.ViewType.READ_ONLY, PhoenixRuntime.getTable(conn,childView).getViewType());
+            assertEquals(PTable.ViewType.READ_ONLY, conn.getTable(viewName).getViewType());
+            assertEquals(PTable.ViewType.READ_ONLY, conn.getTable(childView).getViewType());
 
         }
     }

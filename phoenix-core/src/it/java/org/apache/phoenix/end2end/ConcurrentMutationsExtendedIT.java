@@ -17,6 +17,8 @@
  */
 package org.apache.phoenix.end2end;
 
+import org.apache.phoenix.coprocessorclient.BaseScannerRegionObserverConstants;
+import org.apache.phoenix.mapreduce.index.IndexVerificationOutputRepository;
 import org.apache.phoenix.thirdparty.com.google.common.collect.Maps;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HBaseIOException;
@@ -29,7 +31,6 @@ import org.apache.hadoop.hbase.coprocessor.SimpleRegionObserver;
 import org.apache.hadoop.hbase.regionserver.MiniBatchOperationInProgress;
 import org.apache.hadoop.hbase.util.Bytes;
 
-import org.apache.phoenix.coprocessor.BaseScannerRegionObserver;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.mapreduce.index.IndexTool;
 import org.apache.phoenix.query.QueryServices;
@@ -40,6 +41,8 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.sql.Connection;
@@ -66,12 +69,15 @@ import static org.apache.phoenix.mapreduce.index.PhoenixIndexToolJobCounters.BEF
 import static org.apache.phoenix.mapreduce.index.PhoenixIndexToolJobCounters.BEFORE_REBUILD_UNKNOWN_INDEX_ROW_COUNT;
 import static org.apache.phoenix.mapreduce.index.PhoenixIndexToolJobCounters.BEFORE_REBUILD_UNVERIFIED_INDEX_ROW_COUNT;
 import static org.apache.phoenix.mapreduce.index.PhoenixIndexToolJobCounters.REBUILT_INDEX_ROW_COUNT;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 @Category(NeedsOwnMiniClusterTest.class)
 @RunWith(Parameterized.class)
 public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
-
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(ConcurrentMutationsExtendedIT.class);
     private final boolean uncovered;
     private static final Random RAND = new Random(5);
     private static final String MVCC_LOCK_TEST_TABLE_PREFIX = "MVCCLOCKTEST_";
@@ -85,10 +91,17 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
     }
     @BeforeClass
     public static synchronized void doSetup() throws Exception {
-        Map<String, String> props = Maps.newHashMapWithExpectedSize(1);
+        Map<String, String> props = Maps.newHashMapWithExpectedSize(4);
         props.put(QueryServices.GLOBAL_INDEX_ROW_AGE_THRESHOLD_TO_DELETE_MS_ATTRIB, Long.toString(0));
-        props.put(BaseScannerRegionObserver.PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY,
+        props.put(BaseScannerRegionObserverConstants.PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY,
             Integer.toString(MAX_LOOKBACK_AGE));
+        // The following sets the row lock wait duration to 100 ms to test the code path handling
+        // row lock timeouts. When there are concurrent mutations, the wait time can be
+        // much longer than 100 ms
+        props.put("hbase.rowlock.wait.duration", "100");
+        // The following sets the wait duration for the previous concurrent batch to 10 ms to test
+        // the code path handling timeouts
+        props.put("phoenix.index.concurrent.wait.duration.ms", "10");
         setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
     }
     @Parameterized.Parameters(
@@ -102,7 +115,8 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
         // This checks the state of every raw index row without rebuilding any row
         IndexTool indexTool = IndexToolIT.runIndexTool(false, "", tableName,
                 indexName, null, 0, IndexTool.IndexVerifyType.ONLY);
-        System.out.println(indexTool.getJob().getCounters());
+        LOGGER.info(indexTool.getJob().getCounters().toString());
+        TestUtil.dumpTable(conn, TableName.valueOf(IndexVerificationOutputRepository.OUTPUT_TABLE_NAME));
         assertEquals(0, indexTool.getJob().getCounters().findCounter(REBUILT_INDEX_ROW_COUNT).getValue());
         assertEquals(0, indexTool.getJob().getCounters().findCounter(BEFORE_REBUILD_INVALID_INDEX_ROW_COUNT).getValue());
         assertEquals(0, indexTool.getJob().getCounters().findCounter(BEFORE_REBUILD_MISSING_INDEX_ROW_COUNT).getValue());
@@ -116,7 +130,7 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
         // We want to check the index rows again as they may be modified by the read repair
         indexTool = IndexToolIT.runIndexTool(false, "", tableName, indexName,
                 null, 0, IndexTool.IndexVerifyType.ONLY);
-        System.out.println(indexTool.getJob().getCounters());
+        LOGGER.info(indexTool.getJob().getCounters().toString());
 
         assertEquals(0, indexTool.getJob().getCounters().findCounter(REBUILT_INDEX_ROW_COUNT).getValue());
         assertEquals(0, indexTool.getJob().getCounters().findCounter(BEFORE_REBUILD_INVALID_INDEX_ROW_COUNT).getValue());
@@ -125,7 +139,7 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
         assertEquals(0, indexTool.getJob().getCounters().findCounter(BEFORE_REBUILD_BEYOND_MAXLOOKBACK_INVALID_INDEX_ROW_COUNT).getValue());
         // The index scrutiny run will trigger index repair on all unverified rows, and they will be repaired or
         // deleted (since the age threshold is set to zero ms for these tests
-        PTable pIndexTable = PhoenixRuntime.getTable(conn, indexName);
+        PTable pIndexTable = conn.unwrap(PhoenixConnection.class).getTable(indexName);
         if (pIndexTable.getIndexType() != PTable.IndexType.UNCOVERED_GLOBAL) {
             assertEquals(0, indexTool.getJob().getCounters().findCounter(BEFORE_REBUILD_UNVERIFIED_INDEX_ROW_COUNT).getValue());
         }
@@ -300,9 +314,9 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
 
     @Test
     public void testConcurrentUpserts() throws Exception {
-        int nThreads = 4;
-        final int batchSize = 200;
-        final int nRows = 51;
+        int nThreads = 10;
+        final int batchSize = 100;
+        final int nRows = 499;
         final int nIndexValues = 23;
         final String tableName = generateUniqueName();
         final String indexName = generateUniqueName();
@@ -314,6 +328,7 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
                 + tableName + "(v1)" + (uncovered ? "" :  "INCLUDE(v2, v3)"));
         final CountDownLatch doneSignal = new CountDownLatch(nThreads);
         Runnable[] runnables = new Runnable[nThreads];
+        long startTime = EnvironmentEdgeManager.currentTimeMillis();
         for (int i = 0; i < nThreads; i++) {
             runnables[i] = new Runnable() {
 
@@ -333,7 +348,7 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
                         }
                         conn.commit();
                     } catch (SQLException e) {
-                        throw new RuntimeException(e);
+                        LOGGER.warn("Exception during upsert : " + e);
                     } finally {
                         doneSignal.countDown();
                     }
@@ -347,6 +362,8 @@ public class ConcurrentMutationsExtendedIT extends ParallelStatsDisabledIT {
         }
 
         assertTrue("Ran out of time", doneSignal.await(120, TimeUnit.SECONDS));
+        LOGGER.info("Total upsert time in ms : "
+                + (EnvironmentEdgeManager.currentTimeMillis() - startTime));
         long actualRowCount = verifyIndexTable(tableName, indexName, conn);
         assertEquals(nRows, actualRowCount);
     }

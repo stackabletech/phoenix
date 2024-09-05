@@ -17,8 +17,10 @@
  */
 package org.apache.phoenix.end2end;
 
+import static org.apache.phoenix.coprocessorclient.BaseScannerRegionObserverConstants.PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY;
 import static org.apache.phoenix.mapreduce.index.IndexUpgradeTool.ROLLBACK_OP;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
+import static org.apache.phoenix.exception.SQLExceptionCode.MAX_LOOKBACK_AGE_SUPPORTED_FOR_TABLES_ONLY;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -26,7 +28,11 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assert.assertThrows;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -37,6 +43,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -53,9 +60,9 @@ import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
-import org.apache.hadoop.hbase.ipc.PhoenixRpcSchedulerFactory;
 import org.apache.hadoop.hbase.regionserver.BloomType;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.coprocessor.BaseScannerRegionObserver;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
@@ -77,18 +84,36 @@ import org.apache.phoenix.schema.SchemaNotFoundException;
 import org.apache.phoenix.schema.TableAlreadyExistsException;
 import org.apache.phoenix.schema.TableNotFoundException;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.thirdparty.com.google.common.collect.Maps;
 import org.apache.phoenix.util.EnvironmentEdgeManager;
+import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.QueryUtil;
 import org.apache.phoenix.util.ReadOnlyProps;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.TestUtil;
+import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
-@Category(ParallelStatsDisabledTest.class)
+@Category(NeedsOwnMiniClusterTest.class)
 public class CreateTableIT extends ParallelStatsDisabledIT {
+
+    @BeforeClass
+    public static synchronized void doSetup() throws Exception {
+        Map<String, String> props = Maps.newHashMapWithExpectedSize(1);
+        props.put(PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY, Integer.toString(60*60)); // An hour
+        props.put(QueryServices.USE_STATS_FOR_PARALLELIZATION, Boolean.toString(false));
+        /**
+         * This test checks Table properties at ColumnFamilyDescriptor level, turing phoenix_table_ttl
+         * to false for them to test TTL and other props at HBase level. TTL being set at phoenix level
+         * is being tested in {@link TTLAsPhoenixTTLIT}
+         */
+        props.put(QueryServices.PHOENIX_TABLE_TTL_ENABLED, Boolean.toString(false));
+        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
+    }
 
     @Test
     public void testStartKeyStopKey() throws SQLException {
@@ -106,6 +131,110 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         PhoenixStatement pstatement = statement.unwrap(PhoenixStatement.class);
         List<KeyRange> splits = pstatement.getQueryPlan().getSplits();
         assertTrue(splits.size() > 0);
+    }
+
+    @Test
+    public void testSplitsWithFile() throws Exception {
+        File splitFile = new File("splitFile.txt");
+        try {
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(splitFile))) {
+                writer.write("EA");
+                writer.newLine();
+                writer.write("EZ");
+            }
+            Properties props = new Properties();
+            Connection conn = DriverManager.getConnection(getUrl(), props);
+            String tableName = generateUniqueName();
+            conn.createStatement().execute("CREATE TABLE " + tableName
+                    + " (pk char(2) not null primary key) SPLITS_FILE='splitFile.txt'");
+            conn.close();
+            String query = "select * from  " + tableName;
+            conn = DriverManager.getConnection(getUrl(), props);
+            Statement statement = conn.createStatement();
+            statement.execute(query);
+            PhoenixStatement pstatement = statement.unwrap(PhoenixStatement.class);
+            List<KeyRange> splits = pstatement.getQueryPlan().getSplits();
+            // There will be 3 region splits: '' - EA, EA - EZ, EZ - ''
+            assertEquals(3, splits.size());
+        } finally {
+            // Delete split file.
+            splitFile.delete();
+        }
+    }
+
+    /**
+     * Pass the absolute path of the splits file while creating the table.
+     * @throws Exception
+     */
+    @Test
+    public void testSplitsWithAbsoluteFileName() throws Exception {
+        File splitFile = new File("splitFile.txt");
+        try {
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(splitFile))) {
+                writer.write("EA");
+                writer.newLine();
+                writer.write("EZ");
+            }
+            Properties props = new Properties();
+            Connection conn = DriverManager.getConnection(getUrl(), props);
+            String tableName = generateUniqueName();
+            String createTableSql = "CREATE TABLE " + tableName
+                    + " (pk char(2) not null primary key) SPLITS_FILE='" + splitFile.getAbsolutePath() + "'";
+            conn.createStatement().execute(createTableSql);
+            conn.close();
+            String query = "select * from  " + tableName;
+            conn = DriverManager.getConnection(getUrl(), props);
+            Statement statement = conn.createStatement();
+            statement.execute(query);
+            PhoenixStatement pstatement = statement.unwrap(PhoenixStatement.class);
+            List<KeyRange> splits = pstatement.getQueryPlan().getSplits();
+            // There will be 3 region splits: '' - EA, EA - EZ, EZ - ''
+            assertEquals(3, splits.size());
+        } finally {
+            // Delete split file.
+            splitFile.delete();
+        }
+    }
+
+    /**
+     * Test create table fails with an invalid file name.
+     * @throws Exception
+     */
+    @Test
+    public void testSplitsWithBadFileName() throws Exception {
+        Properties props = new Properties();
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String tableName = generateUniqueName();
+        try {
+            conn.createStatement().execute("CREATE TABLE " + tableName
+                    + " (pk char(2) not null primary key) SPLITS_FILE='bad-split-file.txt'");
+            Assert.fail("Shouldn't come here");
+        } catch (SQLException e) {
+            assertEquals(SQLExceptionCode.SPLIT_FILE_DONT_EXIST.getErrorCode(), e.getErrorCode());
+        } finally {
+            conn.close();
+        }
+    }
+
+    /**
+     * Test create table fails when both split file and split points are provided.
+     * @throws Exception
+     */
+    @Test
+    public void testSplitsWithBothSplitPointsAndSplitFileProvided() throws Exception {
+        Properties props = new Properties();
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String tableName = generateUniqueName();
+        try {
+            conn.createStatement().execute("CREATE TABLE " + tableName
+                    + " (pk char(2) not null primary key) SPLITS_FILE='bad-split-file.txt'" +
+                    " SPLIT ON ('EA','EZ')" );
+            Assert.fail("Shouldn't come here");
+        } catch (SQLException e) {
+            assertEquals(SQLExceptionCode.SPLITS_AND_SPLIT_FILE_EXISTS.getErrorCode(), e.getErrorCode());
+        } finally {
+            conn.close();
+        }
     }
 
     @Test
@@ -349,6 +478,9 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
                 admin.getDescriptor(TableName.valueOf(tableName)).getColumnFamilies();
         assertEquals(1, columnFamilies.length);
         assertEquals(86400, columnFamilies[0].getTimeToLive());
+        //Check if TTL is stored in SYSCAT as well and we are getting ttl from get api in PTable
+        assertEquals(86400, conn.unwrap(PhoenixConnection.class).getTable(
+                new PTableKey(null, tableName)).getTTL());
     }
 
     @Test
@@ -405,6 +537,9 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         assertEquals("B", columnFamilies[0].getNameAsString());
         assertEquals(86400, columnFamilies[1].getTimeToLive());
         assertEquals("C", columnFamilies[1].getNameAsString());
+        //Check if TTL is stored in SYSCAT as well and we are getting ttl from get api in PTable
+        assertEquals(86400, conn.unwrap(PhoenixConnection.class).getTable(
+                new PTableKey(null, tableName)).getTTL());
     }
 
     /**
@@ -431,6 +566,9 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         assertEquals(86400, columnFamilies[0].getTimeToLive());
         assertEquals("B", columnFamilies[1].getNameAsString());
         assertEquals(86400, columnFamilies[1].getTimeToLive());
+        //Check if TTL is stored in SYSCAT as well and we are getting ttl from get api in PTable
+        assertEquals(86400, conn.unwrap(PhoenixConnection.class).getTable(
+                new PTableKey(null, tableName)).getTTL());
     }
 
     /**
@@ -509,6 +647,9 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         assertEquals(1, columnFamilies.length);
         assertEquals("a", columnFamilies[0].getNameAsString());
         assertEquals(10000, columnFamilies[0].getTimeToLive());
+        //Check if TTL is stored in SYSCAT as well and we are getting ttl from get api in PTable
+        assertEquals(10000, conn.unwrap(PhoenixConnection.class).getTable(
+                new PTableKey(null, tableName)).getTTL());
     }
 
     /**
@@ -531,6 +672,9 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         assertEquals(1, columnFamilies.length);
         assertEquals("a", columnFamilies[0].getNameAsString());
         assertEquals(10000, columnFamilies[0].getTimeToLive());
+        //Check if TTL is stored in SYSCAT as well and we are getting ttl from get api in PTable
+        assertEquals(10000, conn.unwrap(PhoenixConnection.class).getTable(
+                new PTableKey(null, tableName)).getTTL());
     }
 
     @Test
@@ -780,13 +924,13 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         String schemaName = generateUniqueName();
         String tableName = generateUniqueName();
         String fullTableName = SchemaUtil.getTableName(schemaName, tableName);
-        try (Connection conn = DriverManager.getConnection(getUrl())) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl())) {
             String ddl = "CREATE TABLE " + fullTableName +
                 " (id char(1) NOT NULL," + " col1 integer NOT NULL," + " col2 bigint NOT NULL," +
                 " CONSTRAINT NAME_PK PRIMARY KEY (id, col1, col2)) " +
                 "CHANGE_DETECTION_ENABLED=true";
             conn.createStatement().execute(ddl);
-            PTable table = PhoenixRuntime.getTableNoCache(conn, fullTableName);
+            PTable table = conn.getTableNoCache(fullTableName);
             assertTrue(table.isChangeDetectionEnabled());
             AlterTableIT.verifySchemaExport(table, getUtility().getConfiguration());
         }
@@ -904,7 +1048,8 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         Properties props = PropertiesUtil.deepCopy(TestUtil.TEST_PROPERTIES);
         String createTableString = "CREATE TABLE " + tableName + " (k VARCHAR PRIMARY KEY, "
                 + "v1 VARCHAR, v2 VARCHAR)";
-        verifyUCFValueInSysCat(tableName, createTableString, props, 0L);
+        verifyUCFValueInSysCat(tableName, createTableString, props,
+                QueryServicesOptions.DEFAULT_UPDATE_CACHE_FREQUENCY);
     }
 
     @Test
@@ -1175,7 +1320,7 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
                 String val = htd.getValue("PRIORITY");
                 assertNotNull("PRIORITY is not set for table:" + htd, val);
                 assertTrue(Integer.parseInt(val)
-                        >= PhoenixRpcSchedulerFactory.getMetadataPriority(config));
+                        >= IndexUtil.getMetadataPriority(config));
             }
             Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
             String ddl ="CREATE TABLE " + fullTableName + TestUtil.TEST_TABLE_SCHEMA;
@@ -1199,7 +1344,7 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
                     org.apache.hadoop.hbase.TableName.valueOf(fullIndexeName));
             val = indexTable.getValue("PRIORITY");
             assertNotNull("PRIORITY is not set for table:" + indexTable, val);
-            assertTrue(Integer.parseInt(val) >= PhoenixRpcSchedulerFactory.getIndexPriority(config));
+            assertTrue(Integer.parseInt(val) >= IndexUtil.getIndexPriority(config));
         }
     }
 
@@ -1229,7 +1374,7 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
             ddl += ", STREAMING_TOPIC_NAME='" + topicName + "'";
         }
         conn.createStatement().execute(ddl);
-        PTable table = PhoenixRuntime.getTableNoCache(conn, dataTableFullName);
+        PTable table = conn.unwrap(PhoenixConnection.class).getTableNoCache(dataTableFullName);
         assertEquals(dataTableVersion, table.getSchemaVersion());
         if (topicName != null) {
             assertEquals(topicName, table.getStreamingTopicName());
@@ -1280,6 +1425,7 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
                 .getColumnQualifierBytes()));
         assertEquals(14, encodingScheme.decode(table.getColumnForColumnName("INT3")
                 .getColumnQualifierBytes()));
+        assertNull(table.getMaxLookbackAge());
     }
 
     @Test
@@ -1699,17 +1845,74 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         }
     }
 
+    @Test
+    public void testCreateTableWithTableLevelMaxLookbackAge() throws Exception {
+        String schemaName = generateUniqueName();
+        String dataTableName = generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        Long maxLookbackAge = 259200L;
+        createTableWithTableLevelMaxLookbackAge(fullTableName, maxLookbackAge.toString());
+        assertEquals(maxLookbackAge, queryTableLevelMaxLookbackAge(fullTableName));
+        schemaName = generateUniqueName();
+        dataTableName = generateUniqueName();
+        fullTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        maxLookbackAge = 25920000000L;
+        createTableWithTableLevelMaxLookbackAge(fullTableName, maxLookbackAge.toString());
+        assertEquals(maxLookbackAge, queryTableLevelMaxLookbackAge(fullTableName));
+        String indexTableName = generateUniqueName();
+        createIndexOnTableWithMaxLookbackAge(indexTableName, fullTableName);
+        assertEquals(maxLookbackAge, queryTableLevelMaxLookbackAge(SchemaUtil.getTableName(schemaName, indexTableName)));
+    }
+
+    @Test
+    public void testCreateTableWithTableLevelMaxLookbackAgeAsNull() throws Exception {
+        String schemaName = generateUniqueName();
+        String dataTableName = generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        createTableWithTableLevelMaxLookbackAge(fullTableName, "NULL");
+        assertNull(queryTableLevelMaxLookbackAge(fullTableName));
+        String indexTableName = generateUniqueName();
+        createIndexOnTableWithMaxLookbackAge(indexTableName, fullTableName);
+        assertNull(queryTableLevelMaxLookbackAge(SchemaUtil.getTableName(schemaName, indexTableName)));
+    }
+
+    @Test
+    public void testCreateTableWithInvalidTableLevelMaxLookbackAge() {
+        String errMsg = "Table level MAX_LOOKBACK_AGE should be a BIGINT value in milli-seconds";
+        IllegalArgumentException err = assertThrows(IllegalArgumentException.class,
+                () -> createTableWithTableLevelMaxLookbackAge(
+                        SchemaUtil.getTableName(generateUniqueName(), generateUniqueName()), "2.3"));
+        assertEquals(errMsg, err.getMessage());
+        err = assertThrows(IllegalArgumentException.class, () -> createTableWithTableLevelMaxLookbackAge(
+                SchemaUtil.getTableName(generateUniqueName(), generateUniqueName()), "three"));
+        assertEquals(errMsg, err.getMessage());
+    }
+
+    @Test
+    public void testCreateIndexWithTableLevelMaxLookbackAge() throws Exception {
+        String schemaName = generateUniqueName();
+        String dataTableName = generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        String indexTableName = generateUniqueName();
+        createTableWithTableLevelMaxLookbackAge(fullTableName, "NULL");
+        String indexOptions = "MAX_LOOKBACK_AGE=300";
+        SQLException err = assertThrows(SQLException.class,
+                () -> createIndexOnTableWithMaxLookbackAge(indexTableName, fullTableName, indexOptions));
+        assertEquals(MAX_LOOKBACK_AGE_SUPPORTED_FOR_TABLES_ONLY.getErrorCode(), err.getErrorCode());
+    }
+
     public static long verifyLastDDLTimestamp(String tableFullName, long startTS, Connection conn) throws SQLException {
         long endTS = EnvironmentEdgeManager.currentTimeMillis();
         //Now try the PTable API
         long ddlTimestamp = getLastDDLTimestamp(conn, tableFullName);
-        assertTrue("PTable DDL Timestamp not in the right range!",
-            ddlTimestamp >= startTS && ddlTimestamp <= endTS);
+        assertTrue("PTable DDL Timestamp: " + ddlTimestamp
+                        + " not in the expected range: (" + startTS + ", " + endTS + ")",
+                ddlTimestamp >= startTS && ddlTimestamp <= endTS);
         return ddlTimestamp;
     }
 
     public static long getLastDDLTimestamp(Connection conn, String tableFullName) throws SQLException {
-        PTable table = PhoenixRuntime.getTableNoCache(conn, tableFullName);
+        PTable table = conn.unwrap(PhoenixConnection.class).getTableNoCache(tableFullName);
         assertNotNull("PTable is null!", table);
         assertNotNull("DDL timestamp is null!", table.getLastDDLTimestamp());
         return table.getLastDDLTimestamp();
@@ -1727,4 +1930,23 @@ public class CreateTableIT extends ParallelStatsDisabledIT {
         }
     }
 
+    private void createTableWithTableLevelMaxLookbackAge(String fullTableName, String maxLookbackAge) throws Exception {
+        try(Connection conn = DriverManager.getConnection(getUrl())) {
+            String createDdl = "CREATE TABLE " + fullTableName +
+                    " (id char(1) NOT NULL PRIMARY KEY,  col1 integer) MAX_LOOKBACK_AGE="+maxLookbackAge;
+            conn.createStatement().execute(createDdl);
+        }
+    }
+
+    private void createIndexOnTableWithMaxLookbackAge(String indexTableName, String fullTableName, String indexOptions) throws Exception {
+        try(Connection conn = DriverManager.getConnection(getUrl())) {
+            String createIndexDdl = "CREATE INDEX " + indexTableName + " ON " + fullTableName + " (COL1) " +
+                    (indexOptions == null ? "" : indexOptions);
+            conn.createStatement().execute(createIndexDdl);
+        }
+    }
+
+    private void createIndexOnTableWithMaxLookbackAge(String indexTableName, String fullTableName) throws Exception {
+        createIndexOnTableWithMaxLookbackAge(indexTableName, fullTableName, null);
+    }
 }

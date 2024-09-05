@@ -27,6 +27,8 @@ import static org.apache.phoenix.exception.SQLExceptionCode
 import static org.apache.phoenix.exception.SQLExceptionCode.CANNOT_MUTATE_TABLE;
 import static org.apache.phoenix.exception.SQLExceptionCode
         .NOT_NULLABLE_COLUMN_IN_ROW_KEY;
+import static org.apache.phoenix.exception.SQLExceptionCode.VIEW_WITH_PROPERTIES;
+import static org.apache.phoenix.exception.SQLExceptionCode.MAX_LOOKBACK_AGE_SUPPORTED_FOR_TABLES_ONLY;
 import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.LINK_TYPE;
 import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData
         .SYSTEM_LINK_HBASE_TABLE_NAME;
@@ -49,6 +51,8 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -73,7 +77,7 @@ import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
-import org.apache.phoenix.coprocessor.TableInfo;
+import org.apache.phoenix.coprocessorclient.TableInfo;
 import org.apache.phoenix.coprocessor.TaskRegionObserver;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.jdbc.PhoenixConnection;
@@ -82,7 +86,10 @@ import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.ColumnAlreadyExistsException;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PName;
+import org.apache.phoenix.schema.PNameImpl;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTableImpl;
+import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.TableAlreadyExistsException;
 import org.apache.phoenix.schema.TableNotFoundException;
@@ -329,7 +336,7 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
 
     @Test
     public void testRecreateDroppedTableWithChildViews() throws Exception {
-        Connection conn = DriverManager.getConnection(getUrl());
+        PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl());
         String fullTableName = SchemaUtil.getTableName(SCHEMA1,
                 generateUniqueName());
         String fullViewName1 = SchemaUtil.getTableName(SCHEMA2,
@@ -363,12 +370,12 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
         conn.createStatement().execute(tableDdl);
         // the two child views should still not exist
         try {
-            PhoenixRuntime.getTableNoCache(conn, fullViewName1);
+            conn.getTableNoCache(fullViewName1);
             fail();
         } catch (SQLException ignored) {
         }
         try {
-            PhoenixRuntime.getTableNoCache(conn, fullViewName2);
+            conn.getTableNoCache(fullViewName2);
             fail();
         } catch (SQLException ignored) {
         }
@@ -731,7 +738,7 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
 
     @Test
     public void testRecreateIndexWhoseAncestorWasDropped() throws Exception {
-        Connection conn = DriverManager.getConnection(getUrl());
+        PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl());
         String fullTableName1 = SchemaUtil.getTableName(SCHEMA1,
                 generateUniqueName());
         String fullViewName1 = SchemaUtil.getTableName(SCHEMA2,
@@ -772,14 +779,14 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
         conn.createStatement().execute(ddl);
 
         String fullIndexName = SchemaUtil.getTableName(SCHEMA2, indexName);
-        PTable index = PhoenixRuntime.getTableNoCache(conn, fullIndexName);
+        PTable index = conn.getTableNoCache(fullIndexName);
         // the index should have v3 but not v2
         validateCols(index);
     }
 
     @Test
     public void testRecreateViewWhoseParentWasDropped() throws Exception {
-        Connection conn = DriverManager.getConnection(getUrl());
+        PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl());
         String fullTableName1 = SchemaUtil.getTableName(SCHEMA1,
                 generateUniqueName());
         String fullViewName1 = SchemaUtil.getTableName(SCHEMA2,
@@ -809,7 +816,7 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
                 + " WHERE k > 5";
         conn.createStatement().execute(ddl);
 
-        PTable view = PhoenixRuntime.getTableNoCache(conn, fullViewName1);
+        PTable view = conn.getTableNoCache(fullViewName1);
         // the view should have v3 but not v2
         validateCols(view);
     }
@@ -1037,7 +1044,7 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
                 generateUniqueName());
         String fullViewName = SchemaUtil.getTableName(SCHEMA2,
                 generateUniqueName());
-        try (Connection conn = DriverManager.getConnection(getUrl())) {
+        try (PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl())) {
             conn.createStatement()
                     .execute("create table " + fullTableName
                             + "(tenantId CHAR(15) NOT NULL, pk1 integer "
@@ -1051,8 +1058,8 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
                             + " set IMMUTABLE_ROWS = true");
 
             // fetch the latest tables
-            PTable table = PhoenixRuntime.getTableNoCache(conn, fullTableName);
-            PTable view = PhoenixRuntime.getTableNoCache(conn, fullViewName);
+            PTable table = conn.getTableNoCache(fullTableName);
+            PTable view = conn.getTableNoCache(fullViewName);
             assertTrue("IMMUTABLE_ROWS property set incorrectly",
                     table.isImmutableRows());
             assertTrue("IMMUTABLE_ROWS property set incorrectly",
@@ -1346,7 +1353,7 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
 
     @Test
     public void testCreateViewDefinesPKConstraint() throws Exception {
-        Connection conn = DriverManager.getConnection(getUrl());
+        PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl());
         String fullTableName = SchemaUtil.getTableName(SCHEMA1,
                 generateUniqueName());
         String fullViewName = SchemaUtil.getTableName(SCHEMA2,
@@ -1361,7 +1368,7 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
                 + " AS SELECT * FROM " + fullTableName + " WHERE K1 = 1";
         conn.createStatement().execute(ddl);
 
-        PhoenixRuntime.getTableNoCache(conn, fullViewName);
+        conn.getTableNoCache(fullViewName);
 
         // assert PK metadata
         ResultSet rs =
@@ -1369,6 +1376,150 @@ public class ViewMetadataIT extends SplitSystemCatalogIT {
                     SchemaUtil.getSchemaNameFromFullName(fullViewName),
                     SchemaUtil.getTableNameFromFullName(fullViewName));
         assertPKs(rs, new String[] {"K1", "K2", "K3", "K4"});
+    }
+
+    @Test
+    public void testAncestorLastDDLMapPopulatedInViewAndIndexHierarchy() throws SQLException {
+        String baseTable = SchemaUtil.getTableName(SCHEMA1, generateUniqueName());
+        String view1 = SchemaUtil.getTableName(SCHEMA2, generateUniqueName());
+        String view2 = SchemaUtil.getTableName(SCHEMA3, generateUniqueName());
+        String view3 = SchemaUtil.getTableName(SCHEMA4, generateUniqueName());
+        String view4 = SchemaUtil.getTableName(SCHEMA2, generateUniqueName());
+        String index1 = generateUniqueName();
+        String index2 = generateUniqueName();
+        String tenant1 = TENANT1;
+        String tenant2 = TENANT2;
+        /*                                     baseTable
+                                 /                  |            \                  \
+                         view1(tenant1)    view3(tenant2)    index1(global)       view4(global)
+                          /
+                        view2(tenant1)
+                        /
+                    index2(tenant1)
+        */
+        try (Connection conn = DriverManager.getConnection(getUrl())) {
+            String baseTableDDL = "CREATE TABLE " + baseTable + " (TENANT_ID VARCHAR NOT NULL, PK1 VARCHAR NOT NULL, V1 VARCHAR, V2 VARCHAR CONSTRAINT NAME_PK PRIMARY KEY(TENANT_ID, PK1)) MULTI_TENANT = true ";
+            conn.createStatement().execute(baseTableDDL);
+            String index1DDL = "CREATE INDEX " + index1 + " ON " + baseTable + "(V1)";
+            conn.createStatement().execute(index1DDL);
+
+
+            try (Connection tenant1Conn = getTenantConnection(tenant1)) {
+                String view1DDL = "CREATE VIEW " + view1 + " AS SELECT * FROM " + baseTable;
+                tenant1Conn.createStatement().execute(view1DDL);
+
+                String view2DDL = "CREATE VIEW " + view2 + " AS SELECT * FROM " + view1;
+                tenant1Conn.createStatement().execute(view2DDL);
+
+                String index2DDL = "CREATE INDEX " + index2 + " ON " + view2 + "(V1)";
+                tenant1Conn.createStatement().execute(index2DDL);
+            }
+
+            try (Connection tenant2Conn = getTenantConnection(tenant2)) {
+                String view3DDL = "CREATE VIEW " + view3 + " AS SELECT * FROM " + baseTable;
+                tenant2Conn.createStatement().execute(view3DDL);
+            }
+
+            String view4DDL = "CREATE VIEW " + view4 + " AS SELECT * FROM " + baseTable;
+            conn.createStatement().execute(view4DDL);
+
+            //validate ancestor->last_ddl_timestamps maps
+            PTable basePTable = PhoenixRuntime.getTable(conn, baseTable);
+            Long baseTableLastDDLTimestamp = basePTable.getLastDDLTimestamp();
+            PTableKey baseTableKey = new PTableKey(null, baseTable);
+            //base table map should be empty
+            Map<PTableKey,Long> map = basePTable.getAncestorLastDDLTimestampMap();
+            assertEquals(0, map.size());
+
+            //global view
+            map = PhoenixRuntime.getTable(conn, view4).getAncestorLastDDLTimestampMap();
+            assertEquals(1, map.size());
+            assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+
+            //global index in cache and in parent PTable
+            PTable index1PTable = PhoenixRuntime.getTable(conn, SchemaUtil.getTableName(SCHEMA1, index1));
+            map = index1PTable.getAncestorLastDDLTimestampMap();
+            assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+            assertEquals(1, basePTable.getIndexes().size());
+            map = basePTable.getIndexes().get(0).getAncestorLastDDLTimestampMap();
+            assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+
+            //tenant2 view
+            try (Connection tenant2Conn = getTenantConnection(tenant2)) {
+                map = PhoenixRuntime.getTable(tenant2Conn, view3).getAncestorLastDDLTimestampMap();
+                assertEquals(1, map.size());
+                assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+            }
+            try (Connection tenant1Conn = getTenantConnection(tenant1)) {
+                //tenant1 view
+                PTable view1PTable = PhoenixRuntime.getTable(tenant1Conn, view1);
+                map = view1PTable.getAncestorLastDDLTimestampMap();
+                assertEquals(1, map.size());
+                assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+                //tenant1 child view
+                PTableKey view1Key = new PTableKey(view1PTable.getTenantId(), view1);
+                map = PhoenixRuntime.getTable(tenant1Conn, view2).getAncestorLastDDLTimestampMap();
+                assertEquals(2, map.size());
+                assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+                assertEquals(view1PTable.getLastDDLTimestamp(), map.get(view1Key));
+                //tenant1 child view index in cache and in child view PTable
+                PTable view2PTable = PhoenixRuntime.getTable(tenant1Conn, view2);
+                PTableKey view2Key = new PTableKey(view2PTable.getTenantId(), view2);
+                PTable index2PTable = PhoenixRuntime.getTable(tenant1Conn, SchemaUtil.getTableName(SCHEMA3, index2));
+                map = index2PTable.getAncestorLastDDLTimestampMap();
+                assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+                assertEquals(view2PTable.getLastDDLTimestamp(), map.get(view2Key));
+                assertEquals(2, view2PTable.getIndexes().size());
+                for (PTable index : view2PTable.getIndexes()) {
+                    // inherited index
+                    if (index.getTableName().getString().equals(index1)) {
+                        map = index.getAncestorLastDDLTimestampMap();
+                        assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+                    } else {
+                        // view index
+                        map = index.getAncestorLastDDLTimestampMap();
+                        assertEquals(baseTableLastDDLTimestamp, map.get(baseTableKey));
+                        assertEquals(view2PTable.getLastDDLTimestamp(), map.get(view2Key));
+                    }
+                }
+            }
+        }
+    }
+
+    private Connection getTenantConnection(String tenantId) throws SQLException {
+        Properties tenantProps = new Properties();
+        tenantProps.setProperty(PhoenixRuntime.TENANT_ID_ATTRIB, tenantId);
+        return DriverManager.getConnection(getUrl(), tenantProps);
+    }
+
+    @Test
+    public void testAlterViewAndViewIndexMaxLookbackAgeFails() throws Exception {
+        String schemaName = generateUniqueName();
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = SchemaUtil.getTableName(schemaName, dataTableName);
+        try(Connection conn = DriverManager.getConnection(getUrl());
+            Statement stmt = conn.createStatement()) {
+            String ddl = "CREATE TABLE " + fullDataTableName + " (ID VARCHAR NOT NULL PRIMARY KEY, COL1 INTEGER)";
+            stmt.execute(ddl);
+            assertNull(queryTableLevelMaxLookbackAge(fullDataTableName));
+            String viewName = generateUniqueName();
+            String fullViewName = SchemaUtil.getTableName(schemaName, viewName);
+            ddl = "CREATE VIEW " + fullViewName + " AS SELECT * FROM " + fullDataTableName;
+            stmt.execute(ddl);
+            assertNull(queryTableLevelMaxLookbackAge(fullViewName));
+            String alterViewDdl = "ALTER VIEW " + fullViewName + " SET MAX_LOOKBACK_AGE = 300";
+            SQLException err = assertThrows(SQLException.class, () -> stmt.execute(alterViewDdl));
+            assertEquals(VIEW_WITH_PROPERTIES.getErrorCode(), err.getErrorCode());
+            String viewIndexName = generateUniqueName();
+            String fullViewIndexName = SchemaUtil.getTableName(schemaName, viewIndexName);
+            ddl = "CREATE INDEX " + viewIndexName + " ON " + fullViewName + " (COL1)";
+            stmt.execute(ddl);
+            assertNull(queryTableLevelMaxLookbackAge(fullViewIndexName));
+            String alterViewIndexDdl = "ALTER INDEX " + viewIndexName + " ON " + fullViewName +
+                    " ACTIVE SET MAX_LOOKBACK_AGE = 300";
+            err = assertThrows(SQLException.class, () -> stmt.execute(alterViewIndexDdl));
+            assertEquals(MAX_LOOKBACK_AGE_SUPPORTED_FOR_TABLES_ONLY.getErrorCode(), err.getErrorCode());
+        }
     }
 
     private void assertPKs(ResultSet rs, String[] expectedPKs)

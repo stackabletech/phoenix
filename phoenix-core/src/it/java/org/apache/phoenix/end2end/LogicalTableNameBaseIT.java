@@ -22,6 +22,7 @@ import org.apache.hadoop.hbase.client.Admin;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.coprocessorclient.BaseScannerRegionObserverConstants;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.query.BaseTest;
 import org.apache.phoenix.query.PhoenixTestBuilder;
@@ -30,6 +31,7 @@ import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.types.PInteger;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.EnvironmentEdgeManager;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.QueryUtil;
 import org.apache.phoenix.util.ReadOnlyProps;
@@ -58,7 +60,6 @@ import static org.apache.phoenix.query.PhoenixTestBuilder.DDLDefaults.MAX_ROWS;
 import static org.apache.phoenix.query.QueryConstants.NAMESPACE_SEPARATOR;
 import static org.apache.phoenix.util.PhoenixRuntime.TENANT_ID_ATTRIB;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
-import org.apache.phoenix.coprocessor.BaseScannerRegionObserver;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -73,7 +74,7 @@ public abstract class LogicalTableNameBaseIT extends BaseTest {
     static void initCluster(boolean isNamespaceMapped) throws Exception {
         Map<String, String> props = Maps.newConcurrentMap();
         props.put(QueryServices.DROP_METADATA_ATTRIB, Boolean.TRUE.toString());
-        props.put(BaseScannerRegionObserver.PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY, Integer.toString(60*60*1000)); // An hour
+        props.put(BaseScannerRegionObserverConstants.PHOENIX_MAX_LOOKBACK_AGE_CONF_KEY, Integer.toString(60*60*1000)); // An hour
         if (isNamespaceMapped) {
             props.put(QueryServices.IS_NAMESPACE_MAPPING_ENABLED, Boolean.TRUE.toString());
         }
@@ -530,13 +531,16 @@ public abstract class LogicalTableNameBaseIT extends BaseTest {
     }
 
     public static void renameAndDropPhysicalTable(Connection conn, String tenantId, String schema, String tableName, String physicalName, boolean isNamespaceEnabled) throws Exception {
+        // if client is validating last_ddl_timestamp, this change in physical table name should be visible to the client
+        // UPDATE LAST_DDL_TIMESTAMP of the table and clear the server metadata cache on region servers
+        long lastDDLTimestamp = EnvironmentEdgeManager.currentTimeMillis();
         String
                 changeName = String.format(
-                "UPSERT INTO SYSTEM.CATALOG (TENANT_ID, TABLE_SCHEM, TABLE_NAME, COLUMN_NAME, COLUMN_FAMILY, PHYSICAL_TABLE_NAME) VALUES (%s, %s, '%s', NULL, NULL, '%s')",
-                tenantId, schema==null ? null : ("'" + schema + "'"), tableName, physicalName);
+                "UPSERT INTO SYSTEM.CATALOG (TENANT_ID, TABLE_SCHEM, TABLE_NAME, COLUMN_NAME, COLUMN_FAMILY, PHYSICAL_TABLE_NAME, LAST_DDL_TIMESTAMP) VALUES (%s, %s, '%s', NULL, NULL, '%s', %d)",
+                tenantId, schema==null ? null : ("'" + schema + "'"), tableName, physicalName, lastDDLTimestamp);
         conn.createStatement().execute(changeName);
         conn.commit();
-
+        ServerMetadataCacheTestImpl.resetCache();
         String fullTableName = SchemaUtil.getTableName(schema, tableName);
         if (isNamespaceEnabled && !(Strings.isNullOrEmpty(schema) || NULL_STRING.equals(schema))) {
             fullTableName = schema + NAMESPACE_SEPARATOR + tableName;

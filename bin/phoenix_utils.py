@@ -22,6 +22,7 @@
 from __future__ import print_function
 import os
 import fnmatch
+import re
 import subprocess
 
 def find(pattern, classPaths):
@@ -32,14 +33,14 @@ def find(pattern, classPaths):
         # remove * if it's at the end of path
         if ((path is not None) and (len(path) > 0) and (path[-1] == '*')) :
             path = path[:-1]
-    
+
         for root, dirs, files in os.walk(path):
             # sort the file names so *-client always precedes *-thin-client
             files.sort()
             for name in files:
                 if fnmatch.fnmatch(name, pattern):
                     return os.path.join(root, name)
-                
+
     return ""
 
 def tryDecode(input):
@@ -203,8 +204,11 @@ def setPath():
         opentelemetry_agent_extension_jar = findFileInPathWithoutRecursion(OPENTELEMETRY_AGENT_EXTENSION_PATTERN, os.path.join(current_dir, "..", "lib/tracing"))
     if opentelemetry_agent_extension_jar is None or opentelemetry_agent_extension_jar == "":
         opentelemetry_agent_extension_jar = findFileInPathWithoutRecursion(OPENTELEMETRY_AGENT_EXTENSION_PATTERN, os.path.join(current_dir, "..", "phoenix-opentelemetry-trace-sampler", "target"))
-    return ""
 
+    __set_java_home()
+    __set_jvm_flags()
+
+    return ""
 
 def set_tracing():
     global phoenix_trace_opts
@@ -231,6 +235,78 @@ def shell_quote(args):
         import pipes
         return " ".join([pipes.quote(tryDecode(v)) for v in args])
 
+
+def __set_java_home():
+    global java_home
+    global java
+    java_home = os.getenv('JAVA_HOME')
+    java = 'java'
+
+    # HBase configuration folder path (where hbase-site.xml reside) for
+    # HBase/Phoenix client side property override
+    hbase_config_path = hbase_conf_dir
+
+    # load hbase-env.??? to extract JAVA_HOME, HBASE_PID_DIR, HBASE_LOG_DIR
+    hbase_env_path = None
+    hbase_env_cmd  = None
+    if os.name == 'posix':
+        hbase_env_path = os.path.join(hbase_config_path, 'hbase-env.sh')
+        hbase_env_cmd = ['bash', '-c', 'source %s && env' % hbase_env_path]
+    elif os.name == 'nt':
+        hbase_env_path = os.path.join(hbase_config_path, 'hbase-env.cmd')
+        hbase_env_cmd = ['cmd.exe', '/c', 'call %s & set' % hbase_env_path]
+    if not hbase_env_path or not hbase_env_cmd:
+        sys.stderr.write("hbase-env file unknown on platform {}{}".format(os.name, os.linesep))
+        sys.exit(-1)
+
+    hbase_env = {}
+    if os.path.isfile(hbase_env_path):
+        p = subprocess.Popen(hbase_env_cmd, stdout = subprocess.PIPE)
+        for x in p.stdout:
+            (k, _, v) = tryDecode(x).partition('=')
+            hbase_env[k.strip()] = v.strip()
+
+    if 'JAVA_HOME' in hbase_env:
+        java_home = hbase_env['JAVA_HOME']
+
+    if java_home:
+        java = os.path.join(java_home, 'bin', 'java')
+
+    return ""
+
+
+def __set_jvm_flags():
+    global jvm_module_flags
+    jvm_module_flags = ""
+    # This should be ASCII
+    version_output = subprocess.check_output([java, "-version"], stderr=subprocess.STDOUT).decode()
+    version_output = tryDecode(version_output)
+    m = re.search(r'version\s"(\d+)\.(\d+)', version_output)
+    if (m is None):
+        # Could not find version
+        return ""
+    major = m.group(1)
+    minor = m.group(2)
+    if (major is None or minor is None):
+        #Could not identify version
+        return ""
+    if (minor == "1"):
+        major = minor
+    if (int(major) >= 11):
+        # Copied from hbase startup script
+        jvm_module_flags = "-Dorg.apache.hbase.thirdparty.io.netty.tryReflectionSetAccessible=true \
+--add-modules jdk.unsupported \
+--add-opens java.base/java.nio=ALL-UNNAMED \
+--add-opens java.base/sun.nio.ch=ALL-UNNAMED \
+--add-opens java.base/java.lang=ALL-UNNAMED \
+--add-opens java.base/jdk.internal.ref=ALL-UNNAMED \
+--add-opens java.base/java.lang.reflect=ALL-UNNAMED \
+--add-exports java.base/jdk.internal.misc=ALL-UNNAMED \
+--add-exports java.security.jgss/sun.security.krb5=ALL-UNNAMED \
+--add-exports java.base/sun.net.dns=ALL-UNNAMED \
+--add-exports java.base/sun.net.util=ALL-UNNAMED"
+    return ""
+
 def common_sqlline_args(parser):
     parser.add_argument('-v', '--verbose', help='Verbosity on sqlline.', action="store_true")
     parser.add_argument('-c', '--color', help='Color setting for sqlline.', action="store_true")
@@ -256,4 +332,6 @@ if __name__ == "__main__":
     print("logging_jar:", logging_jar)
     print("opentelemetry_agent_jar:", opentelemetry_agent_jar)
     print("opentelemetry_agent_extension_jar:", opentelemetry_agent_extension_jar)
-
+    print("java_home:", java_home)
+    print("java:", java)
+    print("jvm_module_flags:", jvm_module_flags)

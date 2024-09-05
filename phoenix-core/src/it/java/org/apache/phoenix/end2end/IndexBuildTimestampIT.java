@@ -226,7 +226,7 @@ public class IndexBuildTimestampIT extends BaseTest {
             Properties props = new Properties();
             props.setProperty(QueryServices.ENABLE_SERVER_SIDE_UPSERT_MUTATIONS, "true");
             props.setProperty(QueryServices.ENABLE_SERVER_SIDE_DELETE_MUTATIONS, "true");
-            Connection conn = DriverManager.getConnection(getUrl(), props);
+            PhoenixConnection conn = (PhoenixConnection) DriverManager.getConnection(getUrl(), props);
 
             String viewName = null;
             if (view) {
@@ -247,9 +247,10 @@ public class IndexBuildTimestampIT extends BaseTest {
 
             // Verify the index timestamps via Phoenix
             String selectSql = String.format("SELECT * FROM %s WHERE val = 'abc'", (view ? viewName : dataTableName));
-            conn = DriverManager.getConnection(getUrl());
+            conn = (PhoenixConnection) DriverManager.getConnection(getUrl());
             // assert we are pulling from index table
-            assertExplainPlan(conn, localIndex, selectSql, dataTableName, (view ? "_IDX_" + dataTableName : indexName));
+            assertExplainPlan(conn, localIndex, selectSql, dataTableName, (view && !localIndex ?
+                    "_IDX_" + dataTableName : indexName));
             ResultSet rs = conn.createStatement().executeQuery(selectSql);
             assertTrue (rs.next());
             assertTrue(rs.unwrap(PhoenixResultSet.class).getCurrentRow().getValue(0).getTimestamp() < clock2.initialTime() &&
@@ -258,7 +259,8 @@ public class IndexBuildTimestampIT extends BaseTest {
             selectSql =
                     String.format("SELECT * FROM %s WHERE val = 'bcd'", (view ? viewName : dataTableName));
             // assert we are pulling from index table
-            assertExplainPlan(conn, localIndex, selectSql, dataTableName, (view ? "_IDX_" + dataTableName : indexName));
+            assertExplainPlan(conn, localIndex, selectSql, dataTableName, (view && !localIndex ?
+                    "_IDX_" + dataTableName : indexName));
 
             rs = conn.createStatement().executeQuery(selectSql);
             assertTrue (rs.next());
@@ -268,7 +270,7 @@ public class IndexBuildTimestampIT extends BaseTest {
             assertFalse (rs.next());
 
             // Verify the index timestamps via HBase
-            PTable pIndexTable = PhoenixRuntime.getTable(conn, indexName);
+            PTable pIndexTable = conn.getTable(indexName);
             Table table = conn.unwrap(PhoenixConnection.class).getQueryServices()
                     .getTable(pIndexTable.getPhysicalName().getBytes());
 

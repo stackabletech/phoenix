@@ -17,6 +17,7 @@
  */
 package org.apache.phoenix.query;
 
+import static org.apache.hadoop.hbase.coprocessor.CoprocessorHost.REGIONSERVER_COPROCESSOR_CONF_KEY;
 import static org.apache.phoenix.hbase.index.write.ParallelWriterIndexCommitter.NUM_CONCURRENT_INDEX_WRITER_THREADS_CONF_KEY;
 import static org.apache.phoenix.query.QueryConstants.MILLIS_IN_DAY;
 import static org.apache.phoenix.query.QueryServices.DROP_METADATA_ATTRIB;
@@ -91,7 +92,6 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -104,7 +104,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
-import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -117,7 +116,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.annotation.Nonnull;
 
-import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
@@ -130,6 +128,11 @@ import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Admin;
 import org.apache.hadoop.hbase.client.RegionInfo;
 import org.apache.hadoop.hbase.client.TableDescriptor;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.ResultScanner;
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.ipc.PhoenixRpcSchedulerFactory;
 import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.master.assignment.AssignmentManager;
@@ -144,15 +147,17 @@ import org.apache.phoenix.end2end.ParallelStatsDisabledIT;
 import org.apache.phoenix.end2end.ParallelStatsDisabledTest;
 import org.apache.phoenix.end2end.ParallelStatsEnabledIT;
 import org.apache.phoenix.end2end.ParallelStatsEnabledTest;
+import org.apache.phoenix.end2end.PhoenixRegionServerEndpointTestImpl;
+import org.apache.phoenix.end2end.ServerMetadataCacheTestImpl;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
+import org.apache.phoenix.hbase.index.IndexRegionObserver;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
 import org.apache.phoenix.jdbc.PhoenixEmbeddedDriver;
 import org.apache.phoenix.jdbc.PhoenixTestDriver;
 import org.apache.phoenix.schema.NewerTableAlreadyExistsException;
 import org.apache.phoenix.schema.PTable;
-import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.TableAlreadyExistsException;
 import org.apache.phoenix.schema.TableNotFoundException;
@@ -493,6 +498,8 @@ public abstract class BaseTest {
             LOGGER.error("Exception caught when shutting down mini map reduce cluster", t);
         } finally {
             try {
+                // Clear ServerMetadataCache.
+                ServerMetadataCacheTestImpl.resetCache();
                 utility.shutdownMiniCluster();
             } catch (Throwable t) {
                 LOGGER.error("Exception caught when shutting down mini cluster", t);
@@ -548,7 +555,8 @@ public abstract class BaseTest {
         utility = new HBaseTestingUtility(conf);
         try {
             long startTime = System.currentTimeMillis();
-            utility.startMiniCluster(NUM_SLAVES_BASE);
+            utility.startMiniCluster(overrideProps.getInt(
+                    QueryServices.TESTS_MINI_CLUSTER_NUM_REGION_SERVERS, NUM_SLAVES_BASE));
             long startupTime = System.currentTimeMillis()-startTime;
             LOGGER.info("HBase minicluster startup complete in {} ms", startupTime);
             return getLocalClusterUrl(utility);
@@ -639,9 +647,25 @@ public abstract class BaseTest {
         if (conf.getLong(QueryServices.PHOENIX_SERVER_PAGE_SIZE_MS, 0) == 0) {
             conf.setLong(QueryServices.PHOENIX_SERVER_PAGE_SIZE_MS, 0);
         }
+        setPhoenixRegionServerEndpoint(conf);
         return conf;
     }
 
+    /*
+        Set property hbase.coprocessor.regionserver.classes to include test implementation of
+        PhoenixRegionServerEndpoint by default, if some other regionserver coprocs
+        are not already present.
+     */
+    protected static void setPhoenixRegionServerEndpoint(Configuration conf) {
+        String value = conf.get(REGIONSERVER_COPROCESSOR_CONF_KEY);
+        if (value == null) {
+            value = PhoenixRegionServerEndpointTestImpl.class.getName();
+        }
+        else {
+            value = value + "," + PhoenixRegionServerEndpointTestImpl.class.getName();
+        }
+        conf.set(REGIONSERVER_COPROCESSOR_CONF_KEY, value);
+    }
     private static PhoenixTestDriver newTestDriver(ReadOnlyProps props) throws Exception {
         PhoenixTestDriver newDriver;
         String driverClassName = props.get(DRIVER_CLASS_NAME_ATTRIB);
@@ -798,7 +822,7 @@ public abstract class BaseTest {
             expectedColumnEncoding, String tableName)
             throws Exception {
         PhoenixConnection phxConn = conn.unwrap(PhoenixConnection.class);
-        PTable table = PhoenixRuntime.getTableNoCache(phxConn, tableName);
+        PTable table = phxConn.getTableNoCache(tableName);
         assertEquals(expectedStorageScheme, table.getImmutableStorageScheme());
         assertEquals(expectedColumnEncoding, table.getEncodingScheme());
     }
@@ -952,7 +976,7 @@ public abstract class BaseTest {
                             rs.getString(PhoenixDatabaseMetaData.TABLE_SCHEM),
                             rs.getString(PhoenixDatabaseMetaData.TABLE_NAME));
                     try {
-                        PhoenixRuntime.getTable(conn, fullTableName);
+                        conn.unwrap(PhoenixConnection.class).getTable(fullTableName);
                         fail("The following tables are not deleted that should be:" + getTableNames(rs));
                     } catch (TableNotFoundException e) {
                     }
@@ -2151,5 +2175,43 @@ public abstract class BaseTest {
             }
         }
         return false;
+    }
+
+    protected Long queryTableLevelMaxLookbackAge(String fullTableName) throws Exception {
+        try(Connection conn = DriverManager.getConnection(getUrl())) {
+            PhoenixConnection pconn = conn.unwrap(PhoenixConnection.class);
+            return pconn.getTableNoCache(fullTableName).getMaxLookbackAge();
+        }
+    }
+
+    public void deleteAllRows(Connection conn, TableName tableName) throws SQLException,
+            IOException, InterruptedException {
+        Scan scan = new Scan();
+        Admin admin = conn.unwrap(PhoenixConnection.class).getQueryServices().
+                getAdmin();
+        org.apache.hadoop.hbase.client.Connection hbaseConn = admin.getConnection();
+        Table table = hbaseConn.getTable(tableName);
+        boolean deletedRows = false;
+        try (ResultScanner scanner = table.getScanner(scan)) {
+            for (Result r : scanner) {
+                Delete del = new Delete(r.getRow());
+                table.delete(del);
+                deletedRows = true;
+            }
+        } catch (Exception e) {
+            //if the table doesn't exist, we have no rows to delete. Easier to catch
+            //than to pre-check for existence
+        }
+        //don't flush/compact if we didn't write anything, because we'll hang forever
+        if (deletedRows) {
+            getUtility().getAdmin().flush(tableName);
+            TestUtil.majorCompact(getUtility(), tableName);
+        }
+    }
+
+    static public void resetIndexRegionObserverFailPoints() {
+        IndexRegionObserver.setFailPreIndexUpdatesForTesting(false);
+        IndexRegionObserver.setFailDataTableUpdatesForTesting(false);
+        IndexRegionObserver.setFailPostIndexUpdatesForTesting(false);
     }
 }

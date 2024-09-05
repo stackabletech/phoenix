@@ -63,6 +63,7 @@ import org.apache.phoenix.index.PhoenixIndexBuilder;
 import org.apache.phoenix.index.PhoenixIndexCodec;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.query.ConnectionQueryServices;
+import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.schema.ColumnNotFoundException;
 import org.apache.phoenix.schema.PColumn;
@@ -213,8 +214,8 @@ public class IndexTestUtil {
 
         Map<String, String> props = new HashMap<>();
         props.put(NonTxIndexBuilder.CODEC_CLASS_NAME_KEY, PhoenixIndexCodec.class.getName());
-        Indexer.enableIndexing(baseDescBuilder, PhoenixIndexBuilder.class,
-                props, QueryServicesOptions.DEFAULT_COPROCESSOR_PRIORITY);
+        IndexUtil.enableIndexing(baseDescBuilder, PhoenixIndexBuilder.class.getName(),
+                props, QueryServicesOptions.DEFAULT_COPROCESSOR_PRIORITY, QueryConstants.INDEXER_CLASSNAME);
         admin.modifyTable(baseDescBuilder.build());
         baseDescriptor = admin.getDescriptor(TableName.valueOf(physicalTableName));
         TableDescriptor indexDescriptor = null;
@@ -294,7 +295,7 @@ public class IndexTestUtil {
     public static void assertRowsForEmptyColValue(Connection conn, String tableName,
             byte[] emptyValue) throws SQLException, IOException {
         ConnectionQueryServices cqs = conn.unwrap(PhoenixConnection.class).getQueryServices();
-        PTable pTable = PhoenixRuntime.getTable(conn, tableName);
+        PTable pTable = conn.unwrap(PhoenixConnection.class).getTable(tableName);
         Table hTable = cqs.getTable(pTable.getPhysicalName().getBytes());
 
         byte[] emptyKeyValueCF = SchemaUtil.getEmptyColumnFamily(pTable);

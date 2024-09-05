@@ -20,22 +20,22 @@ package org.apache.phoenix.index;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.coprocessorclient.BaseScannerRegionObserverConstants;
 import org.apache.phoenix.coprocessor.IndexRebuildRegionScanner;
 import org.apache.phoenix.coprocessor.IndexToolVerificationResult;
-import org.apache.phoenix.coprocessor.UngroupedAggregateRegionObserver;
 import org.apache.phoenix.mapreduce.index.IndexTool;
 import org.apache.phoenix.mapreduce.index.IndexVerificationResultRepository;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.Matchers;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.io.IOException;
 
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.when;
 
 public class ShouldVerifyTest {
@@ -53,7 +53,7 @@ public class ShouldVerifyTest {
         MockitoAnnotations.initMocks(this);
         indexRowKey = null;
         when(im.getIndexTableName()).thenReturn(Bytes.toBytes("indexName"));
-        when(scanner.shouldVerify(any(IndexTool.IndexVerifyType.class), Matchers.<byte[]>any(), any(Scan.class),
+        when(scanner.shouldVerify(any(IndexTool.IndexVerifyType.class), ArgumentMatchers.<byte[]>any(), any(Scan.class),
                 any(Region.class), any(IndexMaintainer.class),
                 any(IndexVerificationResultRepository.class), anyBoolean())).thenCallRealMethod();
         when(scanner.shouldVerify()).thenCallRealMethod();
@@ -68,7 +68,7 @@ public class ShouldVerifyTest {
     @Test
     public void testShouldVerify_repair_rebuild_true() throws IOException {
         indexRowKey = new byte[5];
-        when(scan.getAttribute(UngroupedAggregateRegionObserver.INDEX_RETRY_VERIFY)).thenReturn(Bytes.toBytes(1L));
+        when(scan.getAttribute(BaseScannerRegionObserverConstants.INDEX_RETRY_VERIFY)).thenReturn(Bytes.toBytes(1L));
         assertShouldVerify(true);
     }
 
@@ -80,14 +80,14 @@ public class ShouldVerifyTest {
 
     @Test
     public void testShouldVerify_false() throws IOException {
-        when(scan.getAttribute(UngroupedAggregateRegionObserver.INDEX_RETRY_VERIFY)).thenReturn(Bytes.toBytes(1L));
+        when(scan.getAttribute(BaseScannerRegionObserverConstants.INDEX_RETRY_VERIFY)).thenReturn(Bytes.toBytes(1L));
         when(resultRepository.getVerificationResult(1L, scan, region, im.getIndexTableName())).thenReturn(verificationResult);
         assertShouldVerify(false);
     }
 
     @Test
     public void testShouldVerify_rebuild_true() throws IOException {
-        when(scan.getAttribute(UngroupedAggregateRegionObserver.INDEX_RETRY_VERIFY)).thenReturn(Bytes.toBytes(1L));
+        when(scan.getAttribute(BaseScannerRegionObserverConstants.INDEX_RETRY_VERIFY)).thenReturn(Bytes.toBytes(1L));
         when(resultRepository.getVerificationResult(1L, scan, region, im.getIndexTableName())).thenReturn(null);
         assertShouldVerify(true);
     }

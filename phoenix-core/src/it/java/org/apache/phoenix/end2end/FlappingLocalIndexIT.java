@@ -161,6 +161,8 @@ public class FlappingLocalIndexIT extends BaseLocalIndexIT {
             
             Admin admin = driver.getConnectionQueryServices(getUrl(), TestUtil.TEST_PROPERTIES).getAdmin();
             int numRegions = admin.getRegions(physicalTableName).size();
+            int trimmedRegionLocations = admin.getConfiguration()
+                .getInt(QueryServices.MAX_REGION_LOCATIONS_SIZE_EXPLAIN_PLAN, -1);
             
             String query = "SELECT * FROM " + tableName +" where v1 like 'a%'";
 
@@ -180,15 +182,16 @@ public class FlappingLocalIndexIT extends BaseLocalIndexIT {
                 explainPlanAttributes.getIteratorTypeAndScanSize());
             assertEquals("RANGE SCAN ",
                 explainPlanAttributes.getExplainScanType());
-            assertEquals(indexPhysicalTableName,
-                explainPlanAttributes.getTableName());
+            assertEquals(indexTableName + "(" + indexPhysicalTableName + ")",
+                    explainPlanAttributes.getTableName());
             assertEquals(" [1,'a'] - [1,'b']",
                 explainPlanAttributes.getKeyRanges());
             assertEquals("SERVER FILTER BY FIRST KEY ONLY",
                 explainPlanAttributes.getServerWhereFilter());
             assertEquals("CLIENT MERGE SORT",
                 explainPlanAttributes.getClientSortAlgo());
-            assertEquals(numRegions, explainPlanAttributes.getRegionLocations().size());
+            assertEquals(trimmedRegionLocations,
+                explainPlanAttributes.getRegionLocations().size());
 
             rs = conn1.createStatement().executeQuery(query);
             assertTrue(rs.next());
@@ -214,8 +217,8 @@ public class FlappingLocalIndexIT extends BaseLocalIndexIT {
                 explainPlanAttributes.getIteratorTypeAndScanSize());
             assertEquals("RANGE SCAN ",
                 explainPlanAttributes.getExplainScanType());
-            assertEquals(indexPhysicalTableName,
-                explainPlanAttributes.getTableName());
+            assertEquals(indexTableName + "(" + indexPhysicalTableName + ")",
+                    explainPlanAttributes.getTableName());
             assertEquals(" [1,'a']",
                 explainPlanAttributes.getKeyRanges());
             assertEquals("SERVER FILTER BY FIRST KEY ONLY",
@@ -243,8 +246,8 @@ public class FlappingLocalIndexIT extends BaseLocalIndexIT {
                 explainPlanAttributes.getIteratorTypeAndScanSize());
             assertEquals("RANGE SCAN ",
                 explainPlanAttributes.getExplainScanType());
-            assertEquals(indexPhysicalTableName,
-                explainPlanAttributes.getTableName());
+            assertEquals(indexTableName + "(" + indexPhysicalTableName + ")",
+                    explainPlanAttributes.getTableName());
             assertEquals(" [1,*] - [1,'z']",
                 explainPlanAttributes.getKeyRanges());
             assertEquals("SERVER FILTER BY FIRST KEY ONLY",
@@ -278,8 +281,8 @@ public class FlappingLocalIndexIT extends BaseLocalIndexIT {
                 explainPlanAttributes.getIteratorTypeAndScanSize());
             assertEquals("RANGE SCAN ",
                 explainPlanAttributes.getExplainScanType());
-            assertEquals(indexPhysicalTableName,
-                explainPlanAttributes.getTableName());
+            assertEquals(indexTableName + "(" + indexPhysicalTableName + ")",
+                    explainPlanAttributes.getTableName());
             assertEquals(" [1]", explainPlanAttributes.getKeyRanges());
             assertEquals("SERVER FILTER BY FIRST KEY ONLY",
                 explainPlanAttributes.getServerWhereFilter());
