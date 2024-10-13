@@ -189,6 +189,15 @@ public class MutationState implements SQLCloseable {
 
     private final boolean indexRegionObserverEnabledAllTables;
 
+    /**
+     * Return result back to client. To be used when client needs to read the whole row
+     * or some specific attributes of the row back. As of PHOENIX-7398, returning whole
+     * row is supported. This is used to allow client to set Mutation attribute that is read
+     * by server for it to atomically read the row and return it back.
+     */
+    private ReturnResult returnResult;
+    private Result result;
+
     public static void resetAllMutationState(){
         allDeletesMutations = true;
         allUpsertsMutations = true;
@@ -484,6 +493,14 @@ public class MutationState implements SQLCloseable {
         return numRows;
     }
 
+    public Result getResult() {
+        return this.result;
+    }
+
+    public void clearResult() {
+        this.result = null;
+    }
+
     private MultiRowMutationState getLastMutationBatch(Map<TableRef, List<MultiRowMutationState>> mutations, TableRef tableRef) {
         List<MultiRowMutationState> mutationBatches = mutations.get(tableRef);
         if (mutationBatches == null || mutationBatches.isEmpty()) {
@@ -670,7 +687,7 @@ public class MutationState implements SQLCloseable {
                 };
                 ImmutableBytesPtr key = new ImmutableBytesPtr(maintainer.buildRowKey(
                         getter, ptr, null, null, mutationTimestamp));
-                PRow row = table.newRow(
+                PRow row = index.newRow(
                         connection.getKeyValueBuilder(), mutationTimestamp, key, false);
                 row.delete();
                 indexMutations.addAll(row.toRowMutations());
@@ -830,6 +847,14 @@ public class MutationState implements SQLCloseable {
                         mutation.setAttribute(SOURCE_OPERATION_ATTRIB, sourceOfDeleteBytes);
                     }
                 }
+                if (this.returnResult != null) {
+                    if (this.returnResult == ReturnResult.ROW) {
+                        for (Mutation mutation : rowMutations) {
+                            mutation.setAttribute(PhoenixIndexBuilderHelper.RETURN_RESULT,
+                                    PhoenixIndexBuilderHelper.RETURN_RESULT_ROW);
+                        }
+                    }
+                }
                 // The DeleteCompiler already generates the deletes for indexes, so no need to do it again
                 rowMutationsPertainingToIndex = Collections.emptyList();
 
@@ -848,6 +873,12 @@ public class MutationState implements SQLCloseable {
                 for (Mutation mutation : rowMutations) {
                     if (onDupKeyBytes != null) {
                         mutation.setAttribute(PhoenixIndexBuilderHelper.ATOMIC_OP_ATTRIB, onDupKeyBytes);
+                    }
+                    if (this.returnResult != null) {
+                        if (this.returnResult == ReturnResult.ROW) {
+                            mutation.setAttribute(PhoenixIndexBuilderHelper.RETURN_RESULT,
+                                    PhoenixIndexBuilderHelper.RETURN_RESULT_ROW);
+                        }
                     }
                 }
                 rowMutationsPertainingToIndex = rowMutations;
@@ -1127,6 +1158,10 @@ public class MutationState implements SQLCloseable {
 
     public long getBatchCount() {
         return batchCount;
+    }
+
+    public void setReturnResult(ReturnResult returnResult) {
+        this.returnResult = returnResult;
     }
 
     public static final class MutationBytes {
@@ -1557,10 +1592,16 @@ public class MutationState implements SQLCloseable {
                                     numUpdatedRowsForAutoCommit = PInteger.INSTANCE.getCodec()
                                             .decodeInt(cell.getValueArray(), cell.getValueOffset(),
                                                     SortOrder.getDefault());
+                                  if (this.returnResult != null) {
+                                      if (this.returnResult == ReturnResult.ROW) {
+                                          this.result = result;
+                                      }
+                                  }
                                 } else {
                                     numUpdatedRowsForAutoCommit = 1;
                                 }
                             }
+
                             // remove each batch from the list once it gets applied
                             // so when failures happens for any batch we only start
                             // from that batch only instead of doing duplicate reply of already
@@ -2011,6 +2052,7 @@ public class MutationState implements SQLCloseable {
         estimatedSize = 0;
         this.mutationsMap.clear();
         phoenixTransactionContext = PhoenixTransactionContext.NULL_CONTEXT;
+        this.returnResult = null;
     }
 
     private void resetTransactionalState() {
@@ -2424,4 +2466,9 @@ public class MutationState implements SQLCloseable {
     public boolean isEmpty() {
         return mutationsMap != null ? mutationsMap.isEmpty() : true;
     }
+
+    public enum ReturnResult {
+        ROW
+    }
+
 }

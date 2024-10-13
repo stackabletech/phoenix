@@ -74,6 +74,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellComparator;
 import org.apache.hadoop.hbase.client.Consistency;
+import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.phoenix.call.CallRunner;
@@ -109,6 +110,7 @@ import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.exception.StaleMetadataCacheException;
 import org.apache.phoenix.exception.UpgradeRequiredException;
 import org.apache.phoenix.execute.MutationState;
+import org.apache.phoenix.execute.MutationState.ReturnResult;
 import org.apache.phoenix.execute.visitor.QueryPlanVisitor;
 import org.apache.phoenix.expression.KeyValueColumnExpression;
 import org.apache.phoenix.expression.RowKeyColumnExpression;
@@ -211,6 +213,7 @@ import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.stats.StatisticsCollectionScope;
 import org.apache.phoenix.schema.tuple.MultiKeyValueTuple;
+import org.apache.phoenix.schema.tuple.ResultTuple;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.schema.types.PDataType;
 import org.apache.phoenix.schema.types.PLong;
@@ -634,10 +637,24 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
 
 
     protected int executeMutation(final CompilableStatement stmt, final AuditQueryLogger queryLogger, String originalSQL) throws SQLException {
-        return executeMutation(stmt, true, queryLogger, originalSQL);
+        return executeMutation(stmt, true, queryLogger, null, originalSQL).getFirst();
     }
 
-    private int executeMutation(final CompilableStatement stmt, final boolean doRetryOnMetaNotFoundError, final AuditQueryLogger queryLogger, String originalSQL) throws SQLException {
+    // TODO: Stackable - is this needed?
+  Pair<Integer, Tuple> executeMutation(final CompilableStatement stmt,
+                                 final AuditQueryLogger queryLogger,
+                                 final ReturnResult returnResult) throws SQLException {
+      return executeMutation(stmt, true, queryLogger, returnResult);
+  }
+
+
+  private Pair<Integer, Tuple> executeMutation(final CompilableStatement stmt,
+                                                final boolean doRetryOnMetaNotFoundError,
+                                                final AuditQueryLogger queryLogger,
+                                                final ReturnResult returnResult,
+                                                String originalSql)
+          throws SQLException {
+
         if (connection.isReadOnly()) {
             throw new SQLExceptionInfo.Builder(
                 SQLExceptionCode.READ_ONLY_CONNECTION).
@@ -646,9 +663,9 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
 	    GLOBAL_MUTATION_SQL_COUNTER.increment();
         try {
             return CallRunner.run(
-                new CallRunner.CallableThrowable<Integer, SQLException>() {
+                new CallRunner.CallableThrowable<Pair<Integer, Tuple>, SQLException>() {
                     @Override
-                    public Integer call() throws SQLException {
+                    public Pair<Integer, Tuple> call() throws SQLException {
                     boolean success = false;
                     String tableName = null;
                     boolean isUpsert = false;
@@ -658,12 +675,6 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                     MutationPlan plan = null;
                     final long startExecuteMutationTime = EnvironmentEdgeManager.currentTimeMillis();
                     clearResultSet();
-                    // TODO for queries we use re-constructed SQLs. We don't have code to do that
-                    // for DLMs, so we just the original
-                    isUpsert = stmt instanceof ExecutableUpsertStatement;
-                    isDelete = stmt instanceof ExecutableDeleteStatement;
-                    isAtomicUpsert = isUpsert && ((ExecutableUpsertStatement)stmt).getOnDupKeyPairs() != null;
-
                     try (Scope connScope = connection.makeCurrent()) {
                         Span span = TraceUtil.createSpan(connection, getSpanName(stmt.getKeyword(), connection.getSchema(), null));
                         span.setAttribute(DB_STATEMENT, originalSQL);
@@ -675,6 +686,10 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                             }
                             state = connection.getMutationState();
                             plan = stmt.compilePlan(PhoenixStatement.this, Sequence.ValueOp.VALIDATE_SEQUENCE);
+                            isUpsert = stmt instanceof ExecutableUpsertStatement;
+                            isDelete = stmt instanceof ExecutableDeleteStatement;
+                            isAtomicUpsert = isUpsert && ((ExecutableUpsertStatement)stmt).getOnDupKeyPairs() != null;
+
                             if (plan.getTargetRef() != null && plan.getTargetRef().getTable() != null) {
                                 if (!Strings.isNullOrEmpty(plan.getTargetRef().getTable().getPhysicalName().toString())) {
                                     tableName = plan.getTargetRef().getTable().getPhysicalName().toString();
@@ -696,12 +711,18 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                                 // just max out at Integer.MAX_VALUE
                                 int lastUpdateCount = (int) Math.min(Integer.MAX_VALUE,
                                         lastState.getUpdateCount());
+                                Result result = null;
                                 if (connection.getAutoCommit()) {
+                                    if (isSingleRowUpdatePlan(isUpsert, isDelete, plan)) {
+                                        state.setReturnResult(returnResult);
+                                    }
                                     connection.commit();
                                     if (isAtomicUpsert) {
                                         lastUpdateCount = connection.getMutationState()
                                                 .getNumUpdatedRowsForAutoCommit();
                                     }
+                                    result = connection.getMutationState().getResult();
+                                    connection.getMutationState().clearResult();
                                 }
                                 setLastQueryPlan(null);
                                 setLastUpdateCount(lastUpdateCount);
@@ -716,8 +737,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                                 }
 
                                 success = true;
-                                span.setStatus(StatusCode.OK);
-                                return lastUpdateCount;
+                                return new Pair<>(lastUpdateCount, new ResultTuple(result));
                             }
                             //Force update cache and retry if meta not found error occurs
                             catch (MetaDataEntityNotFoundException e) {
@@ -731,7 +751,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
                                       span.addEvent("Reloading table " + e.getTableName() + " data from server");
                                     if (new MetaDataClient(connection).updateCache(connection.getTenantId(),
                                         e.getSchemaName(), e.getTableName(), true).wasUpdated()) {
-                                        return executeMutation(stmt, false, queryLogger, originalSQL);
+                                        return executeMutation(stmt, false, queryLogger, returnResult, originalSQL);
                                     }
                                 }
                             }
@@ -810,6 +830,17 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
             Throwables.propagate(e);
             throw new IllegalStateException(); // Can't happen as Throwables.propagate() always throws
         }
+    }
+
+    private static boolean isSingleRowUpdatePlan(boolean isUpsert, boolean isDelete,
+                                                 MutationPlan plan) {
+        boolean isSingleRowUpdate = false;
+        if (isUpsert) {
+            isSingleRowUpdate = true;
+        } else if (isDelete) {
+            isSingleRowUpdate = plan.getContext().getScanRanges().getPointLookupCount() == 1;
+        }
+        return isSingleRowUpdate;
     }
 
     protected static interface CompilableStatement extends BindableStatement {
@@ -2451,17 +2482,46 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
 
     @Override
     public int executeUpdate(String sql) throws SQLException {
+        CompilableStatement stmt = preExecuteUpdate(sql);
+        int updateCount = executeMutation(stmt, createAuditQueryLogger(stmt, sql));
+        flushIfNecessary();
+        return updateCount;
+    }
+
+    /**
+     * Executes the given SQL statement similar to JDBC API executeUpdate() but also returns the
+     * updated or non-updated row as Result object back to the client. This must be used with
+     * auto-commit Connection. This makes the operation atomic.
+     * If the row is successfully updated, return the updated row, otherwise if the row
+     * cannot be updated, return non-updated row.
+     *
+     * @param sql The SQL DML statement, UPSERT or DELETE for Phoenix.
+     * @return The pair of int and Tuple, where int represents value 1 for successful row
+     * update and 0 for non-successful row update, and Tuple represents the state of the row.
+     * @throws SQLException If the statement cannot be executed.
+     */
+    public Pair<Integer, Tuple> executeUpdateReturnRow(String sql) throws SQLException {
+        if (!connection.getAutoCommit()) {
+            throw new SQLExceptionInfo.Builder(SQLExceptionCode.AUTO_COMMIT_NOT_ENABLED).build()
+                    .buildException();
+        }
+        CompilableStatement stmt = preExecuteUpdate(sql);
+        Pair<Integer, Tuple> result =
+                executeMutation(stmt, createAuditQueryLogger(stmt, sql), ReturnResult.ROW);
+        flushIfNecessary();
+        return result;
+    }
+
+    private CompilableStatement preExecuteUpdate(String sql) throws SQLException {
         CompilableStatement stmt = parseStatement(sql);
         if (!stmt.getOperation().isMutation) {
             throw new ExecuteUpdateNotApplicableException(sql);
         }
         if (!batch.isEmpty()) {
             throw new SQLExceptionInfo.Builder(SQLExceptionCode.EXECUTE_UPDATE_WITH_NON_EMPTY_BATCH)
-            .build().buildException();
+                    .build().buildException();
         }
-        int updateCount = executeMutation(stmt, createAuditQueryLogger(stmt, sql), sql);
-        flushIfNecessary();
-        return updateCount;
+        return stmt;
     }
 
     private void flushIfNecessary() throws SQLException {
