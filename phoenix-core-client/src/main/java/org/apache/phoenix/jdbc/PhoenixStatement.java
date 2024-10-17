@@ -643,7 +643,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
     // TODO: Stackable - is this needed?
   Pair<Integer, Tuple> executeMutation(final CompilableStatement stmt,
                                  final AuditQueryLogger queryLogger,
-                                 final ReturnResult returnResult) throws SQLException {
+    final ReturnResult returnResult) throws SQLException {
       return executeMutation(stmt, true, queryLogger, returnResult);
   }
 
@@ -2352,7 +2352,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
     // From the ResultSet javadoc:
     // A ResultSet object is automatically closed when the Statement object that generated it is
     // closed, re-executed, or used to retrieve the next result from a sequence of multiple results.
-    void clearResultSet() throws SQLException {
+    private void clearResultSet() throws SQLException {
         if (lastResultSet != null) {
             try {
                 lastResultSet.close();
@@ -2786,7 +2786,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
         return closeOnCompletion;
     }
 
-    PhoenixResultSet getLastResultSet() {
+    private PhoenixResultSet getLastResultSet() {
         return lastResultSet;
     }
 
@@ -2843,6 +2843,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
 
     private void setLastQueryPlan(QueryPlan lastQueryPlan) {
         this.lastQueryPlan = lastQueryPlan;
+
     }
 
     private void updateActivityOnConnection(ActivityLogInfo item, String value) {
