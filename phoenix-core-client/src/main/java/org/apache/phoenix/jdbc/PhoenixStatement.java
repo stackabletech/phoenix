@@ -641,18 +641,18 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
     }
 
     // TODO: Stackable - is this needed?
-  Pair<Integer, Tuple> executeMutation(final CompilableStatement stmt,
-                                 final AuditQueryLogger queryLogger,
-    final ReturnResult returnResult) throws SQLException {
-      return executeMutation(stmt, true, queryLogger, returnResult);
-  }
+    Pair<Integer, Tuple> executeMutation(final CompilableStatement stmt,
+      final AuditQueryLogger queryLogger,
+      final ReturnResult returnResult, String originalSQL) throws SQLException {
+        return executeMutation(stmt, true, queryLogger, returnResult, originalSQL);
+    }
 
 
   private Pair<Integer, Tuple> executeMutation(final CompilableStatement stmt,
                                                 final boolean doRetryOnMetaNotFoundError,
                                                 final AuditQueryLogger queryLogger,
                                                 final ReturnResult returnResult,
-                                                String originalSql)
+                                                String originalSQL)
           throws SQLException {
 
         if (connection.isReadOnly()) {
@@ -2483,7 +2483,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
     @Override
     public int executeUpdate(String sql) throws SQLException {
         CompilableStatement stmt = preExecuteUpdate(sql);
-        int updateCount = executeMutation(stmt, createAuditQueryLogger(stmt, sql));
+        int updateCount = executeMutation(stmt, createAuditQueryLogger(stmt, sql), sql);
         flushIfNecessary();
         return updateCount;
     }
@@ -2507,7 +2507,7 @@ public class PhoenixStatement implements PhoenixMonitoredStatement, SQLCloseable
         }
         CompilableStatement stmt = preExecuteUpdate(sql);
         Pair<Integer, Tuple> result =
-                executeMutation(stmt, createAuditQueryLogger(stmt, sql), ReturnResult.ROW);
+                executeMutation(stmt, createAuditQueryLogger(stmt, sql), ReturnResult.ROW, sql);
         flushIfNecessary();
         return result;
     }

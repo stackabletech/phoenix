@@ -201,7 +201,7 @@ public class PhoenixPreparedStatement extends PhoenixStatement implements Phoeni
     @Override
     public int executeUpdate() throws SQLException {
         preExecuteUpdate();
-        return executeMutation(statement, createAuditQueryLogger(statement,query));
+        return executeMutation(statement, createAuditQueryLogger(statement, query), query);
     }
 
     private void preExecuteUpdate() throws SQLException {
@@ -235,7 +235,7 @@ public class PhoenixPreparedStatement extends PhoenixStatement implements Phoeni
         // TODO(Stackable)
       //         return executeMutation(statement, createAuditQueryLogger(statement,query), query);
         return executeMutation(statement, createAuditQueryLogger(statement, query),
-                MutationState.ReturnResult.ROW);
+                MutationState.ReturnResult.ROW, query);
     }
 
     public QueryPlan optimizeQuery() throws SQLException {
