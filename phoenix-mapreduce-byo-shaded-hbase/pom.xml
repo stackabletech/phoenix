@@ -236,6 +236,7 @@
                 <pattern>io/</pattern>
                 <shadedPattern>${shaded.package}.io.</shadedPattern>
                 <excludes>
+                  <exclude>io/opentelemetry/**</exclude>
                   <!-- Exclude config keys for Hadoop that look like package names -->
                   <exclude>io/compression/**</exclude>
                   <exclude>io/mapfile/**</exclude>
